@@ -1,0 +1,168 @@
+:root {
+  color-scheme: light;
+  --paper: #f5f5ef;
+  --ink: #292f30;
+  --muted: #5b6261;
+  --blue: #4c8cad;
+  font: 16px Arial, "Microsoft YaHei", sans-serif;
+}
+* { box-sizing: border-box }
+[hidden] { display: none !important }
+body { margin: 0; background: var(--paper); color: var(--ink) }
+main { height: 100vh; height: 100dvh; position: relative; overflow: hidden }
+canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: crosshair }
+.symbols,.sr-only { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden }
+button { padding: 0; border: 0; background: none; color: inherit; cursor: pointer; font: inherit }
+button:disabled { cursor: default }
+button:focus-visible { outline: 2px solid #21688a; outline-offset: 4px }
+header { position: absolute; right: 20px; top: 16px }
+.stats { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700 }
+.stats > svg { width: 20px; height: 20px; fill: currentColor; margin-right: 5px }
+#day { white-space: nowrap }
+#clockControls { position: relative }
+#clock { display: block; position: relative; width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--ink); background: repeating-conic-gradient(from -1deg,var(--ink) 0 2deg,transparent 2deg 30deg) }
+#clock::before { content: ''; position: absolute; inset: 3px; border-radius: 50%; background: var(--paper) }
+#clock::after { content: ''; position: absolute; left: calc(50% - 1px); top: 4px; width: 2px; height: calc(50% - 4px); transform-origin: center bottom; transform: rotate(var(--clock-angle,0deg)); background: var(--ink) }
+#time { position: absolute; top: 36px; right: 0; display: flex; gap: 6px; z-index: 1 }
+#time button { background: var(--ink); color: white; padding: 6px 8px; min-width: 32px }
+footer { position: absolute; bottom: 15px; left: 0; right: 0; pointer-events: none; text-align: center }
+#hint { display: inline-block; margin: 0 0 7px; padding: 2px 6px; font-size: 12px; color: var(--muted); background: color-mix(in srgb,var(--paper) 86%,transparent) }
+.toolbar,#vehicles,nav { display: flex; align-items: center; justify-content: center; gap: clamp(6px,1vw,13px) }
+.toolbar { gap: clamp(10px,2vw,26px) }
+.asset { display: inline-flex; position: relative; flex: 0 0 28px; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; color: white; background: #333837; pointer-events: auto }
+.asset:disabled,#crossings { background: #909790 }
+.asset[aria-pressed=true] { outline: 2px solid var(--ink); outline-offset: 3px }
+.asset svg { width: 21px; height: 21px; fill: currentColor }
+.asset span { position: absolute; left: 100%; top: -3px; color: var(--ink); font-size: 10px; font-weight: 700 }
+.line { pointer-events: auto; position: relative; width: clamp(19px,3vw,28px); height: clamp(19px,3vw,28px); border-radius: 50%; background: var(--line) }
+.line[aria-pressed=true]::before { content: ''; position: absolute; top: -8px; left: calc(50% - 2px); width: 4px; height: 4px; border-radius: 50%; background: var(--ink) }
+.line.empty { opacity: .62 }
+.corner { position: absolute; bottom: 13px; left: 14px; font-size: 26px; line-height: 32px; font-weight: 700 }
+.corner.right { left: auto; right: 14px }
+.corner:disabled { opacity: .2 }
+dialog { color: var(--ink); border: 0; background: transparent; padding: 0; overflow: visible; max-width: 94vw; max-height: 95vh }
+dialog::backdrop { background: #f5f5ef78; backdrop-filter: blur(4px) }
+dialog #panel { padding: 12px; animation: enter .28s ease-out both }
+@keyframes enter { from { opacity: 0; transform: translateY(10px) } to { opacity: 1; transform: translateY(0) } }
+h2 { margin: 3px 0; font-size: clamp(26px,5vw,51px); line-height: 1.1; letter-spacing: -.06em }
+#kicker { font-size: 12px; font-weight: 700; color: var(--muted) }
+#description { margin: 5px 0 24px; line-height: 1.4 }
+#choices { display: flex; flex-wrap: wrap; gap: 12px; align-items: center }
+#choices button { padding: 4px 9px; background: var(--blue); color: white; font-weight: 700 }
+#choices button:hover { background: #28617e }
+
+dialog[data-kind=cities] { width: 100vw; height: 100dvh; max-width: none; max-height: none }
+dialog[data-kind=cities]::backdrop { background: var(--paper) }
+dialog[data-kind=cities] #panel { height: 100%; display: grid; align-content: center; justify-items: center; padding: 20px 0 }
+dialog[data-kind=cities] #choices { position: absolute; bottom: 28px; right: 28px; flex-direction: column; align-items: end; gap: 7px }
+#cityStrip { width: 100%; position: relative; display: flex; justify-content: center; gap: clamp(8px,3vw,42px) }
+#cityStrip::before { content: ''; position: absolute; top: 28px; width: 100%; height: 8px; background: #d9c962 }
+.city-option { width: min(29vw,240px); min-height: 124px; padding: 7px; text-align: left; position: relative; opacity: .48; background: var(--paper); border-top: 4px solid var(--accent) }
+.city-option[aria-pressed=true] { opacity: 1; background: #e9e9df; transform: scale(1.06); z-index: 1 }
+.city-option span { display: block; font-weight: 700; margin-bottom: 4px }
+.city-option svg { display: block; width: 100%; aspect-ratio: 1.55 }
+@media(max-width:650px) {
+  header { right: 11px; top: 10px }
+  footer { bottom: 36px }
+  .corner { bottom: 5px }
+  .asset { width: 23px; height: 23px; flex-basis: 23px }
+  .asset svg { width: 17px; height: 17px }
+  dialog[data-kind=cities] #choices { right: 12px; bottom: 14px }
+}
+@media(prefers-reduced-motion:reduce) { dialog #panel { animation: none } }
+.asset { touch-action: none }
+#assetGhost { position: fixed; z-index: 2; left: -14px; top: -14px; pointer-events: none; opacity: .8 }
+dialog[data-kind=statistics] { width:100vw; height:100dvh; max-width:none; max-height:none }
+dialog[data-kind=statistics]::backdrop { background:#f5f5efe0; backdrop-filter:blur(6px) }
+dialog[data-kind=statistics] #panel { height:100%; padding:0; }
+dialog[data-kind=statistics] :is(#kicker,#description,#choices) { display:none }
+dialog[data-kind=statistics] #headline { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%) }
+#statistics { position:relative; height:100%; display:grid; grid-template-columns:max-content minmax(0,1fr); align-items:center; gap:clamp(18px,6vw,110px); padding:8vh 9vw 6vh 5vw }
+#statsBack { position:absolute; left:1.4vw; top:1.2vh; font-size:clamp(36px,4vw,70px); font-weight:900; line-height:1 }
+#metrics { display:grid; gap:clamp(6px,1.5vh,15px); border-right:2px solid #535451; padding-right:clamp(12px,3.6vw,66px) }
+#metrics button { display:flex; align-items:center; justify-content:end; gap:12px; white-space:nowrap; font-size:clamp(12px,1.35vw,22px) }
+#metrics button::after { content:''; width:clamp(12px,1.65vw,28px); height:clamp(12px,1.65vw,28px); border-radius:50%; background:#aaa9a3 }
+#metrics button[aria-pressed=true]::after { background:var(--metric) }
+#chart { display:block; width:100%; max-height:75vh; overflow:visible }
+@media(max-width:650px) {
+  #statistics { grid-template-columns:minmax(0,1fr); align-content:center; gap:20px; padding:40px 5vw 12px }
+  #metrics { display:flex; justify-content:center; flex-wrap:wrap; border:0; padding:0; gap:7px 12px }
+  #metrics button { gap:4px }
+  #chart { max-height:55vh }
+}
+dialog[data-kind=ended] { width:100vw; height:100dvh; max-width:none; max-height:none }
+dialog[data-kind=ended] #panel { height:100%; display:grid; align-content:center; justify-items:center }
+dialog[data-kind=ended] #choices { flex-direction:column; align-items:start; gap:4px }
+dialog[data-kind=ended] #choices button:last-child { position:absolute; bottom:2vh; right:2vw; min-width:34px; font-size:22px; padding:3px 7px }
+.line.locked { width:clamp(9px,1.45vw,15px); height:clamp(9px,1.45vw,15px); background:#a2a19b; pointer-events:none }
+dialog[data-kind=upgrade] { width:min(94vw,510px); color:#2d2e2d }
+dialog[data-kind=upgrade]::backdrop { background:#f5f5ef45; backdrop-filter:none }
+main:has(dialog[data-kind=upgrade][open]) :is(canvas,header) { filter:blur(3px) }
+main:has(dialog[data-kind=upgrade][open]) #hint { visibility:hidden }
+dialog[data-kind=upgrade] #kicker:empty { display:none }
+dialog[data-kind=upgrade] #description { margin-bottom:clamp(18px,4vh,40px) }
+dialog[data-kind=upgrade] #choices { display:grid; grid-template-columns:1fr 1fr; gap:clamp(10px,4vw,35px); align-items:start }
+dialog[data-kind=upgrade] #choices button { display:grid; justify-items:center; align-content:start; gap:8px; color:inherit; background:none; padding:5px 2px; text-align:center }
+dialog[data-kind=upgrade] #choices strong { font-size:clamp(18px,2.4vw,30px); line-height:1.2 }
+.reward-description { font-size:clamp(12px,1.4vw,16px); font-weight:400 }
+.reward-icon { position:relative; display:grid; place-items:center; width:clamp(58px,8vw,90px); aspect-ratio:1; border-radius:50%; background:#2d2e2d; color:white }
+.reward-icon svg { width:65%; height:65%; fill:currentColor }
+.reward-count { position:absolute; left:102%; top:9%; color:#2d2e2d; font-size:clamp(18px,2.4vw,30px); font-weight:700 }
+dialog[data-kind=upgrade] #choices button:hover:not(:disabled) .reward-icon { outline:2px solid #2d2e2d; outline-offset:4px }
+dialog[data-kind=upgrade] #choices button:disabled { opacity:.44 }
+.reward-flight { position:fixed; z-index:2; pointer-events:none }
+dialog[data-kind=pause] #kicker:empty { display:none }
+dialog[data-kind=pause] #choices { flex-direction:column; align-items:start; gap:6px }
+:root.night { color-scheme:dark; --paper:#170e16; --ink:#f0e8e3; --muted:#cdc2bc; --blue:#326985 }
+.night #time button { color:var(--paper) }
+.night #hint { background:color-mix(in srgb,var(--paper) 86%,transparent) }
+.night .asset { color:#f0e8e3; background:#514651 }
+.night .asset:disabled,.night #crossings { color:#261f26; background:#8c8684 }
+.night .line.locked { background:#777271 }
+.night button:focus-visible { outline-color:#8ac4e5 }
+.night dialog::backdrop { background:#170e1685 }
+.night dialog[data-kind=cities]::backdrop { background:var(--paper) }
+.night .city-option[aria-pressed=true] { background:#312831 }
+.night #cityStrip::before { background:#8a7845 }
+.night dialog[data-kind=statistics]::backdrop { background:#170e16da }
+.night #metrics { border-color:#a69b96 }
+.night #metrics button[aria-pressed=true]::after,.night #chart { filter:brightness(1.35) }
+.night dialog[data-kind=upgrade] { color:var(--ink) }
+.night dialog[data-kind=upgrade]::backdrop { background:#170e1645 }
+.night .reward-icon { background:#ddd1ca; color:var(--paper) }
+.night .reward-count { color:var(--ink) }
+.night dialog[data-kind=upgrade] #choices button:hover:not(:disabled) .reward-icon { outline-color:var(--ink) }
+#time button:not([aria-pressed=true]) { opacity:.66 }
+#time button[aria-pressed=true] { box-shadow:inset 0 -2px #80b9d8 }
+:root[data-lesson="0"] header,:root[data-lesson="0"] .toolbar,
+:root[data-lesson] .line.locked,:root[data-lesson] #vehicles,:root[data-lesson] #remove,
+:root[data-lesson]:not([data-lesson="4"]) #crossings { visibility:hidden }
+#scenicMeter { width:18px; height:18px; flex:none; border-radius:50%; border:1px solid var(--ink); background:conic-gradient(var(--ink) var(--progress,0%),transparent 0) }
+dialog[data-kind=ended] #choices button:nth-last-child(2) { position:absolute; bottom:2vh; right:calc(2vw + 40px); min-width:34px; font-size:22px; padding:3px 7px }
+dialog[data-kind=photo] { width:100vw; height:100dvh; max-width:none; max-height:none; background:var(--paper) }
+dialog[data-kind=photo] #panel { height:100%; padding:0 }
+dialog[data-kind=photo] :is(#kicker,#description,#choices) { display:none }
+dialog[data-kind=photo] #headline { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%) }
+#photo { height:100%; display:grid; place-items:center }
+#photoPreview { width:100%; height:100%; object-fit:contain; cursor:default }
+#photoBack { position:absolute; left:1.4vw; top:1.2vh; font-size:clamp(36px,4vw,70px); font-weight:900; line-height:1 }
+#photoControls { position:absolute; right:2vw; bottom:2vh; display:flex; align-items:center; gap:5px }
+#photoControls button { background:var(--blue); color:white; padding:6px 10px; font-weight:700 }
+#photoControls button[aria-pressed=true] { outline:2px solid var(--ink); outline-offset:2px }
+dialog[data-kind=ended] #choices button:nth-last-child(3) { position:absolute; bottom:2vh; right:calc(2vw + 80px); min-width:34px; font-size:22px; padding:3px 7px }
+dialog[data-kind=replay] { width:100vw; height:100dvh; max-width:none; max-height:none }
+dialog[data-kind=replay]::backdrop { background:transparent; backdrop-filter:none }
+dialog[data-kind=replay] #panel { height:100%; padding:0 }
+dialog[data-kind=replay] :is(#kicker,#description,#choices) { display:none }
+dialog[data-kind=replay] #headline { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%) }
+main:has(dialog[data-kind=replay][open]) > :is(header,footer,.corner) { visibility:hidden }
+#replayBack { position:absolute; left:1.4vw; top:1.2vh; font-size:clamp(36px,4vw,70px); font-weight:900; line-height:1 }
+#replayControls { position:absolute; bottom:2vh; left:50%; transform:translateX(-50%); width:min(94vw,540px); display:flex; gap:12px; align-items:center; padding:7px 12px; background:var(--paper) }
+#replayControls input { flex:1; min-width:0; accent-color:var(--blue) }
+#replayControls button { background:var(--blue); color:white; padding:5px 9px }
+#replayTime { white-space:nowrap }
+#replayControls { flex-wrap:wrap }
+#replayStatus:not(:empty) { width:100%; font-size:12px; text-align:right }
+#creativeEdit { display:block; margin:0 auto 9px; padding:4px 8px; pointer-events:auto; background:var(--paper); color:var(--ink); border:1px solid currentColor; font-size:12px }
+#creativeEdit[aria-pressed=true] { background:var(--ink); color:var(--paper) }
+dialog[data-kind=creative] #choices button[aria-pressed=true] { outline:2px solid var(--ink); outline-offset:2px }

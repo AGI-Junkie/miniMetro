@@ -1,0 +1,8 @@
+# Local test output
+.playwright-cli/
+
+# Third-party / proprietary reference material: not redistributed
+research/coolmath-london/
+research/official-web-demo/
+research/steam-reference/
+research/reference/
