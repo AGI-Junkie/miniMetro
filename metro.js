@@ -150,6 +150,7 @@ let lastFrame = 0;
 const savedGameKey='metro-saved-game-v1';
 let parkedGame=false;
 let parkedSaveWritten=false;
+let playing=false;
 
 function bestScore() {
   try { return Number(localStorage.getItem('metro-best-' + cityKey + '-' + mode)) || 0; }
@@ -337,14 +338,20 @@ function passenger(type) {
 }
 
 // shortcut: 原版音效与配乐有版权，无法取得；这里用 Web Audio 合成近似的柔和五声音阶，要更接近原版需换成自带采样。
-let sound=true, audio, lastNote=0;
+let sound=true, audio;
 try {sound=localStorage.getItem('metro-sound')!=='false';} catch {}
 const pentatonic=[262,294,330,392,440,523,587,659];
-function tone(freq,delay=0,length=.6,volume=.06) {
-  if (!sound) return;
+// 浏览器要求用户手势后才能出声：首次点击/按键时创建并恢复，之前的 tone 直接丢弃，避免恢复时积压齐响。
+function unlockAudio() {
   try {
     audio??=new AudioContext();
-    if (audio.state==='suspended') audio.resume();
+    if (audio.state!=='running') audio.resume();
+  } catch {}
+}
+for (const type of ['pointerdown','keydown']) window.addEventListener(type,unlockAudio,{capture:true});
+function tone(freq,delay=0,length=.6,volume=.06) {
+  if (!sound || audio?.state!=='running') return;
+  try {
     const t=audio.currentTime+delay, osc=audio.createOscillator(), gain=audio.createGain();
     osc.frequency.value=freq;
     gain.gain.setValueAtTime(0,t);
@@ -360,15 +367,34 @@ function ambient() {
   const now=performance.now();
   if (now<nextAmbient) return;
   nextAmbient=now+2500+Math.random()*3500;
-  const f=pentatonic[Math.random()*5|0]/2;
-  tone(f,0,5,.025);
-  if (Math.random()<.4) tone(f*1.5,.4,5,.015);
+  // 不降八度：笔记本扬声器几乎放不出 200Hz 以下，之前听不到就是这个原因。
+  const f=pentatonic[Math.random()*5|0];
+  tone(f,0,5,.04);
+  if (Math.random()<.5) tone(f*1.5,.5,5,.025);
 }
 const chord=(notes,gap,length,volume) => notes.forEach((f,i) => tone(f,i*gap,length,volume));
+const cues={
+  station:() => chord([196,262],.12,.8,.05),
+  line:() => chord([330,392,523],.07,.5,.05),
+  extend:() => tone(440,0,.3,.04),
+  shorten:() => tone(330,0,.3,.04),
+  remove:() => chord([392,294,220],.07,.4,.05),
+  place:() => chord([523,659],.08,.4,.05),
+  step:() => chord([440,587],.09,.4,.04),
+  reward:() => chord([392,523,659,784],.1,.8,.05),
+  upgrade:() => chord([262,330,392,523],.12,.9,.05),
+  error:() => chord([180,160],.12,.3,.07),
+  click:() => tone(660,0,.06,.02),
+  // 乘客积压到快满：音调随倒计时升高、间隔缩短
+  near:() => tone(392,0,.2,.04),
+  warn:ratio => tone(440+ratio*440,0,.15,.05),
+  over:() => chord([330,262,220,165],.25,1.2,.07),
+  best:() => chord([262,330,392,523,659],.15,1.2,.06),
+};
+const cue=(name,arg) => cues[name](arg);
+document.addEventListener('click',event => {if (event.target.closest?.('button')) cue('click');});
 
 function deliver(rider) {
-  const now=performance.now();
-  if (now-lastNote>80) {lastNote=now;tone(pentatonic[Math.random()*pentatonic.length|0]);}
   score++;
   recentTrips.push(time);
   daily.trips++;
@@ -420,6 +446,7 @@ function setRoute(index, route, split=null) {
     const keepsTrack=offset>=0 && old.every((id,i) => route[offset+i]===id);
     if (!keepsTrack || (looped(old) && route.length!==old.length)) {
       notify('极限模式下轨道一经铺设，只能从端点延长');
+      cue('error');
       return false;
     }
   }
@@ -452,6 +479,7 @@ function setRoute(index, route, split=null) {
   const pending=retiring.concat(deferred);
   if (usedCrossings(index,route,pending)>inventory.crossings) {
     notify('过河通道已用完。拆除一条已有通道，或在本周末选择更多通道。');
+    cue('error');
     return false;
   }
   retiring=pending;
@@ -476,6 +504,7 @@ function setRoute(index, route, split=null) {
     trains.splice(trains.indexOf(train),1);
   }
   lines[index]=route;
+  if (route.length!==old.length) cue(!route.length ? 'remove' : !old.length ? 'line' : route.length>old.length ? 'extend' : 'shorten');
   rebuildTracks();
   for (const {train,fraction} of assignments) {
     if (fraction===undefined) continue;
@@ -596,6 +625,7 @@ function addTrain(line,placement=null) {
   };
   trains.push({line,...departure,riders:[],cars:0,born:time});
   inventory.trains--;
+  cue('place');
   updateHUD();
 }
 
@@ -610,6 +640,7 @@ function addCar(line=selected,point=null) {
   train.cars++;
   train.carBorn=time;
   inventory.cars--;
+  cue('place');
   updateHUD();
 }
 
@@ -698,27 +729,56 @@ function passengerChoices(origin,departing=null,replaced=departing) {
   return choices;
 }
 
-function service(train) {
-  const route = lines[train.line];
-  const id = route[train.stop];
+const boardInterval = .06;
+
+function alight(train) {
+  const id = lines[train.line][train.stop];
   const s = stations[id];
-  if (!train.riders.length && !s.waiting.length) return;
+  train.alighted = true;
+  if (!train.riders.length) return;
   const choices = passengerChoices(id,train);
-  const useful = type => choices[type]===train;
   train.riders = train.riders.filter(rider => {
     if (rider.type===s.type) {deliver(rider);return false;}
-    if (useful(rider.type)) return true;
+    if (choices[rider.type]===train) return true;
     queueAt(rider,s);
     return false;
   });
+}
+
+// 一次最多上 limit 人；返回是否还有人能上
+function boardRiders(train,limit=Infinity) {
+  const id = lines[train.line][train.stop];
+  const s = stations[id];
   const capacity = 6*(1+train.cars);
+  if (!s.waiting.length || train.riders.length>=capacity) return false;
+  const choices = passengerChoices(id,train);
   s.waiting = s.waiting.filter(rider => {
-    if (train.riders.length >= capacity || !useful(rider.type)) return true;
+    if (limit<=0 || train.riders.length >= capacity || choices[rider.type]!==train) return true;
     rider.waiting+=Math.max(0,time-rider.queuedAt);
     rider.boardings++;
     train.riders.push(rider);
+    limit--;
     return false;
   });
+  return limit<=0;
+}
+
+// 停站期间：先下车，再按 boardInterval 一个一个上车
+function stepService(train,dt) {
+  if (!train.alighted) alight(train);
+  train.boardTimer=(train.boardTimer ?? 0)+dt;
+  while (train.boardTimer>=boardInterval) {
+    train.boardTimer-=boardInterval;
+    if (!boardRiders(train,1)) {train.boardTimer=0;break;}
+  }
+}
+
+// 停站结束：补完还没上的人
+function service(train) {
+  if (!train.alighted) alight(train);
+  boardRiders(train);
+  delete train.alighted;
+  delete train.boardTimer;
 }
 
 function trainSpacing(train,route) {
@@ -785,7 +845,7 @@ function moveTrains(dt) {
     const route=lines[train.line];
     if (train.dwell>0) {
       train.dwell-=dt;
-      if (train.dwell<=0) service(train);
+      if (train.dwell<=0) service(train); else stepService(train,dt);
       continue;
     }
     const spacing=trainSpacing(train,route);
@@ -1013,7 +1073,7 @@ function spawnStation(position) {
   const type=nextStationType();
   const station={x:position.x,y:position.y,type,waiting:[],pressure:0,capacity:cities[cityKey].stationCapacity ?? 6,born:time,centrality:position.centrality ?? 1};
   stations.push(station);
-  chord([196,262],.12,.8,.05);
+  cue('station');
   // shortcut: 原版 CityPlanner.PEEP_SPAWN_BOOST_COOLDOWN 只给出 6 秒冷却，网页取"新站立即来一位乘客"。
   if (mode!=='creative' && time>=nextSpawnBoost) {addPassengerAt(station);nextSpawnBoost=time+spawnBoostCooldown;}
   connectStationOnTrack(station);
@@ -1084,7 +1144,7 @@ async function animateReward(icon,target) {
 
 function upgrade() {
   week++;
-  chord([262,330,392,523],.12,.9,.05);
+  cue('upgrade');
   for (const station of stations) {
     if (station.pressure>=overloadLimit-weekGrace) station.expiryLimit=station.pressure+weekGrace;
   }
@@ -1172,6 +1232,7 @@ function awardScenicMilestones() {
   if (awarded) {
     updateLines();
     notify('达到客运效率里程碑，已发放新资源');
+    cue('reward');
   }
 }
 
@@ -1504,6 +1565,7 @@ function startTutorial() {
 
 function lessonStage(stage) {
   lesson.stage=stage;
+  cue('step');
   lesson.changed=lesson.elapsed;
   document.documentElement.dataset.lesson=String(stage);
   updateHUD();
@@ -1511,6 +1573,7 @@ function lessonStage(stage) {
 
 function finishTutorial() {
   lesson=null;
+  cue('reward');
   document.documentElement.removeAttribute('data-lesson');
   inventory.lines=3;
   inventory.trains+=2;
@@ -1570,6 +1633,7 @@ function checkExtremeChallenge() {
   unlockedExtreme.add(cityKey);
   try {localStorage.setItem('metro-extreme-'+cityKey,'unlocked');} catch {}
   notify(cities[cityKey].name+'极限模式已解锁');
+  cue('reward');
 }
 
 function simulate(dt) {
@@ -1600,6 +1664,16 @@ function simulate(dt) {
   stations.forEach((s,id) => {s.idle=connected.has(id) ? 0 : (s.idle ?? 0)+dt;});
   for (const [id,s] of stations.entries()) {
     const overloaded=mode!=='endless' && mode!=='creative' && s.waiting.length>s.capacity;
+    if (mode!=='endless' && mode!=='creative') {
+      const nearFull=s.waiting.length>=s.capacity-1;
+      if (nearFull && !s.nearFull) cue('near');
+      s.nearFull=nearFull;
+      if (s.pressure>0 && time>=(s.warnAt ?? 0)) {
+        const ratio=Math.min(1,s.pressure/overloadLimit);
+        cue('warn',ratio);
+        s.warnAt=time+Math.max(.3,1.2*(1-ratio));
+      }
+    }
     if (overloaded && atStation.has(id)) continue;
     s.over=overloaded ? (s.over ?? 0)+dt : 0;
     if (!overloaded) {
@@ -1610,9 +1684,9 @@ function simulate(dt) {
     }
     if (overloaded && s.pressure>=(s.expiryLimit ?? overloadLimit)) {
       phase = 'ended';
-      chord([330,262,220,165],.25,1.2,.07);
       collapseStation = s;
       newBest = score>bestScore();
+      cue(newBest ? 'best' : 'over');
       const record = Math.max(score,bestScore());
       try {localStorage.setItem('metro-best-' + cityKey + '-' + mode, String(record));} catch {}
       sampleStatistics();
@@ -1718,6 +1792,7 @@ function showPanel(title,description,buttons,kicker,kind='menu') {
 
 function start(key,gameMode) {
   parkedGame=false;
+  playing=true;
   mode = gameMode;
   reset(key);
   $('screen').close();
@@ -1725,7 +1800,19 @@ function start(key,gameMode) {
 
 function leaveGame() {
   parkedGame=true;
-  parkedSaveWritten=false;
+  playing=false;
+  parkedSaveWritten=saveGame();
+  showMenu();
+}
+
+// 刷新/关闭页面时自动存档，避免进度丢失
+function autosave() {
+  if (playing && !parkedGame && phase==='play') saveGame();
+}
+addEventListener('pagehide',autosave);
+document.addEventListener('visibilitychange',() => {if (document.hidden) autosave();});
+
+function saveGame() {
   try {
     localStorage.setItem(savedGameKey,JSON.stringify({
       cityKey,mode,stations,lines,trains,retiring,inventory,time,nextStation,nextPassenger,week,score,paused,speed,selected,
@@ -1733,9 +1820,8 @@ function leaveGame() {
       stationGap,recentTrips,scenicMilestone,nextEfficiency,history,daily,replayFrames,lesson,
       bends:lines.map(route => route.bends),
     }));
-    parkedSaveWritten=true;
-  } catch {}
-  showMenu();
+    return true;
+  } catch {return false;}
 }
 
 function readSavedGame() {
@@ -1771,6 +1857,7 @@ function resumeGame(game) {
     updateHUD();
   }
   parkedGame=false;
+  playing=true;
   if (consumeSave) {
     try {localStorage.removeItem(savedGameKey);} catch {}
   }
@@ -2210,7 +2297,7 @@ function paint(clean=false,source=null,target=canvas) {
         else points.push(drag.point);
       }
     }
-    if (!drag.removing && (drag.insert===null || drag.draft!==drag.route)) {
+    if ((drag.insert===null || drag.draft!==drag.route)) {
       drawRoute(points,drag.line,true,false,null,null,lines[drag.line].map(id => stations[id]));
     }
   }
@@ -2282,7 +2369,12 @@ function paint(clean=false,source=null,target=canvas) {
       ctx.restore();
     }
   }
-  if (!source) {retiring.forEach(drawTrain);trains.forEach(drawTrain);}
+  if (!source) {
+    retiring.forEach(drawTrain);
+    trains.forEach(drawTrain);
+    const snap=vehicleDrag?.snap;
+    if (snap) {ctx.save();ctx.globalAlpha=.8;drawTrain({line:snap.line,stop:snap.stop,direction:snap.direction,progress:0,cars:0,riders:[]});ctx.restore();}
+  }
   if (!clean && !source) currentTips().forEach(drawTip);
   if (!clean && !source) drawToast();
 }
@@ -2398,8 +2490,8 @@ function changeBend(line,{key,choice}) {
   updateHUD();
 }
 
-function vehicleAt(point) {
-  let best=Math.max(touchInput ? reach.carTouch : reach.car,8/view.scale), result=null;
+function vehicleAt(point,limit=Math.max(touchInput ? reach.carTouch : reach.car,8/view.scale)) {
+  let best=limit, result=null;
   for (const train of trains) {
     for (let car=0;car<=train.cars;car++) {
       const d=distance(trainPose(train,car),point);
@@ -2481,7 +2573,9 @@ canvas.onpointerdown = event => {
     placeInterchange(station);
     return;
   }
-  const vehicle=station<0 ? vehicleAt(point) : null;
+  // 列车常停在站台上：压在车身上时优先拖列车，只有按在站点边缘才画线
+  const body=vehicleAt(point,13*unit);
+  const vehicle=station<0 || (body && distance(point,trainPose(body.train,body.car))<13*unit) ? (body ?? vehicleAt(point)) : null;
   if (vehicle && !vehicle.train.move && mode!=='extreme') {
     vehicleDrag={...vehicle,pointer:event.pointerId,origin:point,moved:false};
     canvas.setPointerCapture(event.pointerId);
@@ -2521,15 +2615,11 @@ function extendDraft(target,point) {
     if (!route.includes(target)) {
       if (!drag.removing) drag.draft=route.slice(0,insert).concat(target,route.slice(insert));
     } else if (!drag.splitRing && !near) {
-      // gap 是被按住线段两端之间的位置：每删一站，缺口就扩到下一个相邻站
+      // 拖到线路上任意一站即删除（累积）；回到按下处撤销
       const ring=looped(route);
-      const ids=drag.ids ?? route.slice(0,routeSize(route)), n=ids.length;
-      const g=drag.gap ?? insert;
-      const left=ids[ring ? (g-1+n)%n : g-1], right=ids[ring ? g%n : g];
-      const j=ids.indexOf(target);
-      if (j>=0 && (target===left || target===right) && n>(ring ? 3 : 2)) {
+      const ids=drag.ids ?? route.slice(0,routeSize(route));
+      if (ids.includes(target) && ids.length>(ring ? 3 : 2)) {
         const remaining=ids.filter(id => id!==target);
-        drag.gap=ring ? ((j<g%n ? g%n-1 : g%n)%remaining.length) : (j<g ? g-1 : g);
         drag.ids=remaining;
         drag.draft=ring ? [...remaining,remaining[0]] : remaining;
         drag.removing=true;
@@ -2562,7 +2652,11 @@ function extendDraft(target,point) {
 canvas.onpointermove = event => {
   if (vehicleDrag?.pointer===event.pointerId) {
     vehicleDrag.moved ||= distance(vehicleDrag.origin,pointerPoint(event))*view.scale>reach.moveThreshold;
-    if (vehicleDrag.moved) showAssetGhost(vehicleDrag.car ? '#carriage' : '#locomotive',event);
+    const point=pointerPoint(event), track=vehicleDrag.moved && !vehicleDrag.car ? trackAt(point) : null;
+    // 列车拖动时吸附到最近的节点，车头朝向线路另一端；没有靠近的线路才跟着鼠标
+    vehicleDrag.snap=track ? {line:track.line,...departureFromDrop(track.line,track)} : null;
+    if (!vehicleDrag.moved || vehicleDrag.snap) $('assetGhost').hidden=true;
+    else showAssetGhost(vehicleDrag.car ? '#carriage' : '#locomotive',event);
     return;
   }
   if (drag?.pointer !== event.pointerId) return;
@@ -2610,8 +2704,9 @@ $('normalSpeed').onclick=() => setClockStage(1);
 $('speed').onclick=() => setClockStage(2);
 function placeInterchange(id) {
   if (id<0 || !inventory.interchanges) return;
-  if (stations[id].capacity>6) {notify('此站已升级');return;}
+  if (stations[id].capacity>6) {notify('此站已升级');cue('error');return;}
   stations[id].capacity=18;
+  cue('place');
   recordReplay();
   inventory.interchanges--;
   $('interchange').setAttribute('aria-pressed','false');
