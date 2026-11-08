@@ -28,15 +28,24 @@ header { position: absolute; right: 20px; top: 16px }
 footer { position: absolute; bottom: 15px; left: 0; right: 0; pointer-events: none; text-align: center }
 #hint { display: inline-block; margin: 0 0 7px; padding: 2px 6px; font-size: 12px; color: var(--muted); background: color-mix(in srgb,var(--paper) 86%,transparent) }
 .toolbar,#vehicles,nav { display: flex; align-items: center; justify-content: center; gap: clamp(6px,1vw,13px) }
-.toolbar { gap: clamp(10px,2vw,26px) }
+.toolbar { position:relative; width:max-content; margin:auto; gap:clamp(10px,2vw,26px); transition:transform .25s ease,opacity .25s ease,visibility .25s }
+#toolbarToggle { display:block; position:relative; z-index:1; width:24px; height:20px; margin:auto; pointer-events:auto; transition:transform .25s ease }
+#toolbarToggle::before { content:''; display:block; width:9px; height:9px; margin:auto; border-radius:50%; background:#878483 }
+#toolbarToggle[aria-expanded=false] { transform:translateY(var(--line-slot)) }
+#toolbarToggle[aria-expanded=false] + .toolbar { transform:translateY(55px); opacity:0; visibility:hidden }
+@media(prefers-reduced-motion:reduce) { #toolbarToggle,.toolbar { transition:none } }
 .asset { display: inline-flex; position: relative; flex: 0 0 28px; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; color: white; background: #333837; pointer-events: auto }
 .asset:disabled,#crossings { background: #909790 }
 .asset[aria-pressed=true] { outline: 2px solid var(--ink); outline-offset: 3px }
 .asset svg { width: 21px; height: 21px; fill: currentColor }
 .asset span { position: absolute; left: 100%; top: -3px; color: var(--ink); font-size: 10px; font-weight: 700 }
-.line { pointer-events: auto; position: relative; width: clamp(19px,3vw,28px); height: clamp(19px,3vw,28px); border-radius: 50%; background: var(--line) }
-.line[aria-pressed=true]::before { content: ''; position: absolute; top: -8px; left: calc(50% - 2px); width: 4px; height: 4px; border-radius: 50%; background: var(--ink) }
-.line.empty { opacity: .62 }
+footer { --line-slot:clamp(22px,min(5.1vw,6.8vh),52px) }
+#lines { gap:0; position:relative }
+.line { pointer-events: auto; display: grid; place-items: center; flex: 0 0 var(--line-slot); width: var(--line-slot); height: var(--line-slot); border-radius: 50% }
+.line::before { content: ''; width: 40%; aspect-ratio: 1; border-radius: 50%; background: var(--line) }
+.line.built::before { width:80% }
+.line.focused::before { width:140%; z-index:1 }
+#remove { position:absolute; left:var(--remove-x); top:-6px; transform:translate(-50%,-50%); z-index:2; font-size:25px; font-weight:700 }
 .corner { position: absolute; bottom: 13px; left: 14px; font-size: 26px; line-height: 32px; font-weight: 700 }
 .corner.right { left: auto; right: 14px }
 .corner:disabled { opacity: .2 }
@@ -94,7 +103,7 @@ dialog[data-kind=ended] { width:100vw; height:100dvh; max-width:none; max-height
 dialog[data-kind=ended] #panel { height:100%; display:grid; align-content:center; justify-items:center }
 dialog[data-kind=ended] #choices { flex-direction:column; align-items:start; gap:4px }
 dialog[data-kind=ended] #choices button:last-child { position:absolute; bottom:2vh; right:2vw; min-width:34px; font-size:22px; padding:3px 7px }
-.line.locked { width:clamp(9px,1.45vw,15px); height:clamp(9px,1.45vw,15px); background:#a2a19b; pointer-events:none }
+.line.locked { --line:#a2a19b; pointer-events:none }
 dialog[data-kind=upgrade] { width:min(94vw,510px); color:#2d2e2d }
 dialog[data-kind=upgrade]::backdrop { background:#f5f5ef45; backdrop-filter:none }
 main:has(dialog[data-kind=upgrade][open]) :is(canvas,header) { filter:blur(3px) }
@@ -118,7 +127,7 @@ dialog[data-kind=pause] #choices { flex-direction:column; align-items:start; gap
 .night #hint { background:color-mix(in srgb,var(--paper) 86%,transparent) }
 .night .asset { color:#f0e8e3; background:#514651 }
 .night .asset:disabled,.night #crossings { color:#261f26; background:#8c8684 }
-.night .line.locked { background:#777271 }
+.night .line.locked { --line:#777271 }
 .night button:focus-visible { outline-color:#8ac4e5 }
 .night dialog::backdrop { background:#170e1685 }
 .night dialog[data-kind=cities]::backdrop { background:var(--paper) }
@@ -134,7 +143,7 @@ dialog[data-kind=pause] #choices { flex-direction:column; align-items:start; gap
 .night dialog[data-kind=upgrade] #choices button:hover:not(:disabled) .reward-icon { outline-color:var(--ink) }
 #time button:not([aria-pressed=true]) { opacity:.66 }
 #time button[aria-pressed=true] { box-shadow:inset 0 -2px #80b9d8 }
-:root[data-lesson="0"] header,:root[data-lesson="0"] .toolbar,
+:root[data-lesson="0"] header,:root[data-lesson="0"] .toolbar,:root[data-lesson="0"] #toolbarToggle,
 :root[data-lesson] .line.locked,:root[data-lesson] #vehicles,:root[data-lesson] #remove,
 :root[data-lesson]:not([data-lesson="4"]) #crossings { visibility:hidden }
 #scenicMeter { width:18px; height:18px; flex:none; border-radius:50%; border:1px solid var(--ink); background:conic-gradient(var(--ink) var(--progress,0%),transparent 0) }

@@ -33,18 +33,20 @@
   <footer>
     <p id="hint" aria-live="polite"></p>
     <button id="creativeEdit" aria-pressed="false" hidden>编辑车站</button>
-    <div class="toolbar">
+    <button id="toolbarToggle" aria-label="显示或收起工具栏" aria-controls="toolbar" aria-expanded="true"></button>
+    <div class="toolbar" id="toolbar">
       <div id="vehicles">
         <button id="train" class="asset" aria-label="增加机车" title="给当前线路增加机车"><svg aria-hidden="true"><use href="#locomotive"/></svg><span id="trainCount"></span></button>
         <button id="car" class="asset" aria-label="增加车厢" title="给当前线路增加车厢"><svg aria-hidden="true"><use href="#carriage"/></svg><span id="carCount"></span></button>
         <button id="interchange" class="asset" aria-label="放置换乘站" title="升级车站容量"><svg aria-hidden="true"><use href="#station"/></svg><span id="interchangeCount"></span></button>
       </div>
-      <nav id="lines" aria-label="选择线路"></nav>
+      <nav id="lines" aria-label="选择线路">
+        <button id="remove" class="asset" aria-label="拆线" title="拆除当前线路" hidden>×</button>
+      </nav>
       <div id="crossings" class="asset" aria-label="剩余过河通道" title="剩余过河通道"><svg aria-hidden="true"><use href="#tunnel"/></svg><span id="crossingCount"></span></div>
     </div>
   </footer>
   <button id="menu" class="corner" aria-label="菜单" title="暂停菜单（Esc）">←</button>
-  <button id="remove" class="corner right" aria-label="拆线" title="拆除当前线路">×</button>
   <div id="assetGhost" class="asset" aria-hidden="true" hidden><svg><use href="#locomotive"/></svg></div>
   <dialog id="screen" aria-labelledby="headline">
     <div id="panel">
