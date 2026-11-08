@@ -13,6 +13,11 @@ async page => {
   await page.evaluate(() => localStorage.removeItem('metro-saved-game-v1'));
   await page.getByRole('button',{name:'开始游戏'}).click();
   await page.getByRole('button',{name:'时间控制'}).click();
+  check(await page.evaluate(() => {
+    const clock=$('clock').getBoundingClientRect();
+    const controls=[...$('time').children].map(button => button.getBoundingClientRect());
+    return controls.every((button,i) => button.x===clock.x && button.top>=(i ? controls[i-1].bottom : clock.bottom));
+  }),'clock controls open vertically under the clock');
   await page.getByRole('button',{name:'暂停',exact:true}).click();
   const world = p => page.evaluate(([x,y]) => {
     const rect=canvas.getBoundingClientRect();
@@ -27,6 +32,16 @@ async page => {
   };
   await dragThrough([await station(0),await station(1)]);
   check(await page.evaluate(() => lines[0].join()==='0,1' && trains.length===1 && inventory.trains===2),'drag creates line and dispatches train');
+  check(await page.evaluate(() => {
+    const live=ctx, sample=document.createElement('canvas').getContext('2d');
+    const points=[{x:30,y:50},{x:100,y:50},{x:170,y:50}];
+    try {
+      ctx=sample;
+      drawRoute(points,0,true,false,null,null,points.slice(0,2));
+      return sample.getImageData(60,50,1,1).data[3]===0 &&
+        sample.getImageData(130,50,1,1).data[3]>0;
+    } finally {ctx=live;}
+  }),'drag preview draws the extension without painting the existing track twice');
   check(await page.evaluate(() => {
     const sample=document.createElement('canvas').getContext('2d');
     const live=ctx, river=new Path2D();
@@ -47,6 +62,20 @@ async page => {
       ctx=live;
     }
   }),'a tunnel has paired colored dashes and a clear center, with solid track on land');
+  check(await page.evaluate(() => {
+    const sample=document.createElement('canvas').getContext('2d'), live=ctx, river=new Path2D();
+    river.rect(0,50,200,55);
+    try {
+      ctx=sample;
+      ctx.beginPath();ctx.moveTo(100,20);ctx.lineTo(100,135);
+      ctx.strokeStyle=colors[0];ctx.globalAlpha=.5;
+      strokeTrack([[100,20],[100,135]],river);
+      const alpha=(x,y) => sample.getImageData(x,y,1,1).data[3];
+      const half=value => value>=120 && value<=130;
+      return [35,36,37,38,39,40,41,42,43,44].every(y => half(alpha(100,y))) &&
+        half(alpha(97,52)) && half(alpha(102,52)) && alpha(100,52)===0;
+    } finally {ctx=live;}
+  }),'retiring track is continuously faded on land and keeps the double tunnel rails');
   await page.getByRole('button',{name:'线路 2',exact:true}).click();
   check(await page.evaluate(() => {
     const [first,second,,locked]=$('lines').children;
@@ -73,6 +102,13 @@ async page => {
   check(await page.evaluate(() => $('toolbar').inert && focusedLine===null && $('remove').hidden),'toolbar can be collapsed without hiding the map');
   await page.getByRole('button',{name:'显示或收起工具栏'}).click();
   check(await page.evaluate(() => !$('toolbar').inert),'toolbar reopens');
+  await page.getByRole('button',{name:'线路 1',exact:true}).focus();
+  await page.keyboard.press('ArrowDown');
+  check(await page.evaluate(() => $('toolbar').inert && document.activeElement===$('toolbarToggle') &&
+    $('toolbarToggle').getAttribute('aria-expanded')==='false'),'down closes the toolbar and preserves keyboard focus');
+  await page.keyboard.press('ArrowUp');
+  check(await page.evaluate(() => !$('toolbar').inert && $('toolbarToggle').getAttribute('aria-expanded')==='true'),
+    'up opens the toolbar');
   const result = await page.evaluate(() => {
     stations[0].waiting.push(passenger(2));
     for(let i=0;i<500;i++) moveTrains(.05);
@@ -141,7 +177,16 @@ async page => {
   check(await page.evaluate(() => drag?.insert!==null && Boolean(drag)), 'ring segment is draggable');
   await page.mouse.move(breakTo.x,breakTo.y);
   await page.mouse.up();
-  check(await page.evaluate(() => !looped(lines[1]) && lines[1].length===3),'dragging a ring segment away opens the ring');
+  check(await page.evaluate(() => looped(lines[1])),'dropping a ring segment on empty space keeps the loop closed');
+  await page.keyboard.down('Shift');
+  await page.mouse.move(breakFrom.x,breakFrom.y);
+  await page.mouse.down();
+  const splitLine=await page.evaluate(() => ({selected,line:drag?.line,insert:drag?.insert}));
+  check(splitLine.line===1 && splitLine.insert!==null,'Shift grabs the selected ring: '+JSON.stringify(splitLine));
+  await page.mouse.move(breakTo.x,breakTo.y);
+  await page.mouse.up();
+  await page.keyboard.up('Shift');
+  check(await page.evaluate(() => !looped(lines[1]) && lines[1].length===3),'Shift-drag deliberately opens the ring');
   await page.evaluate(() => {inventory.interchanges=1;updateHUD();});
   await page.getByRole('button',{name:'放置换乘站'}).click();
   const target=await station(1);
@@ -369,7 +414,8 @@ async page => {
   await page.getByRole('button',{name:'线路 1',exact:true}).click();
   check(await page.locator('#remove').isHidden() && await page.evaluate(() => mode==='extreme' &&
     !setRoute(0,[]) && !setRoute(0,[0,2,1]) && lines[0].join()==='0,1'), 'extreme tracks cannot be deleted or have a station inserted');
-  await dragThrough([await station(1),await station(2)]);
+  const extremeTail=await page.evaluate(() => {const tail=terminatorStubs(lines[0])[1];return [tail.x,tail.y];});
+  await dragThrough([await world(extremeTail),await station(2)]);
   check(await page.evaluate(() => lines[0].join()==='0,1,2' && setRoute(0,[0,1,2,0]) &&
     !setRoute(0,[0,1,2]) && lines[0].join()==='0,1,2,0'),'extreme allows extension and permanent closure');
   check(await page.evaluate(() => {
@@ -423,16 +469,16 @@ async page => {
     inventory.crossings=12;
     setRoute(0,[0,1]);
     const points=lineTrack(0,1,0);
-    const [a,b]=points.slice(1).map((q,i) => [points[i],q]).sort(([a,b],[c,d])=>distance(c,d)-distance(a,b))[0];
+    const [a,b]=points.slice(-2);
     return [(a.x+b.x)/2,(a.y+b.y)/2];
   });
   const loco=await page.getByRole('button',{name:'增加机车'}).boundingBox();
   await dragThrough([{x:loco.x+loco.width/2,y:loco.y+loco.height/2},await world(drop)]);
-  check(await page.evaluate(([x,y]) => trains.length===2 && distance(trainPose(trains[1]),{x,y})<2 &&
-    trains[1].progress>0 && inventory.trains===1,drop),'locomotive is placed on the exact dropped segment');
+  check(await page.evaluate(() => trains.length===2 && distance(trainPose(trains[1]),stations[1])<2 &&
+    trains[1].direction===-1 && trains[1].progress===0 && inventory.trains===1),'locomotive departs from the nearer station toward the drop');
   await page.evaluate(() => {trains[1].cars=1;inventory.cars=1;updateHUD();});
   const wagon=await page.getByRole('button',{name:'增加车厢'}).boundingBox();
-  await dragThrough([{x:wagon.x+wagon.width/2,y:wagon.y+wagon.height/2},await world(drop)]);
+  await dragThrough([{x:wagon.x+wagon.width/2,y:wagon.y+wagon.height/2},await station(1)]);
   check(await page.evaluate(() => trains[0].cars===0 && trains[1].cars===2 && !inventory.cars),
     'dropped carriage attaches to the nearest train even if another has fewer cars');
   await page.evaluate(() => {
@@ -468,6 +514,20 @@ async page => {
   await page.evaluate(() => {mode='extreme';});
   await dragThrough([await pose(0),await world([300,175])]);
   check(await page.evaluate(() => trains[0].line===1 && !trains[0].move),'extreme blocks dragging deployed vehicles');
+  await page.evaluate(() => {
+    start('London','normal');paused=true;inventory.crossings=12;
+    stations=[[230,150],[520,150],[230,400]].map(([x,y],type) =>
+      ({x,y,type,capacity:6,waiting:[],pressure:0,born:-1}));
+    setRoute(0,[0,1,2,0]);
+  });
+  const trainButton=await page.getByRole('button',{name:'增加机车'}).boundingBox();
+  const trainPickup={x:trainButton.x+trainButton.width/2,y:trainButton.y+trainButton.height/2};
+  await dragThrough([trainPickup,await world([300,150])]);
+  await dragThrough([trainPickup,await world([230,215])]);
+  check(await page.evaluate(() => trains.length===3 &&
+    trains[1].stop===0 && trains[1].direction===1 && trains[1].progress===0 &&
+    trains[2].stop===0 && trains[2].direction===-1 && trains[2].progress===0 && inventory.trains===0),
+    'dropping a locomotive on either side of a loop station selects opposite departures');
   await page.evaluate(() => {
     start('London','normal');paused=true;inventory.crossings=12;setRoute(0,[0,1,2]);phase='ended';showResult();
   });
@@ -566,6 +626,74 @@ async page => {
   check(await page.evaluate(() => lines[0].join()==='0,1,2'),'dragging the terminator bar extends the line');
   await dragThrough([await world(await page.evaluate(() => {const [h]=terminatorStubs(lines[0]);return [h.x,h.y];})),await station(1)]);
   check(await page.evaluate(() => lines[0].join()==='1,2'),'dragging the terminator bar back over a station shortens the line');
+  await dragThrough([await station(2),await station(0)]);
+  check(await page.evaluate(() => lines[0].join()==='1,2' && lines[1].join()==='2,0'),
+    'dragging from the center of a served terminal starts a new line when a slot is available');
+  await page.evaluate(() => {
+    start('London','normal');paused=true;inventory.crossings=12;
+    stations=[[240,155],[410,155],[570,250],[570,410]].map(([x,y],type) =>
+      ({x,y,type,capacity:6,waiting:[],pressure:0,born:-1}));
+    setRoute(0,[0,1]);setRoute(1,[1,2]);setRoute(2,[0,2]);
+  });
+  await dragThrough([await station(3),await station(2)]);
+  check(await page.evaluate(() => lines[0].join()==='0,1' && lines[1].join()==='1,2,3' &&
+    lines[2].join()==='0,2'),'dragging a new station to a terminus extends an existing line when all slots are used');
+  const parallelRail=await page.evaluate(() => {
+    start('London','normal');paused=true;inventory.crossings=12;
+    stations=[[240,155],[570,155],[405,265]].map(([x,y],type) =>
+      ({x,y,type,capacity:6,waiting:[],pressure:0,born:-1}));
+    setRoute(0,[0,1]);setRoute(1,[0,1]);
+    const path=lineTrack(0,1,1);
+    return [(path[1].x+path.at(-2).x)/2,(path[1].y+path.at(-2).y)/2];
+  });
+  await dragThrough([await world(parallelRail),await station(2)]);
+  check(await page.evaluate(() => lines[0].join()==='0,1' && lines[1].join()==='0,2,1' && selected===1),
+    'dragging an adjacent unselected track edits the actual track under the pointer');
+  const bendGesture=await page.evaluate(() => {
+    start('London','normal');paused=true;inventory.crossings=12;
+    stations=[[230,150],[520,260],[235,430]].map(([x,y],type) =>
+      ({x,y,type,capacity:6,waiting:[],pressure:0,born:-1}));
+    setRoute(0,[0,1,2,0]);
+    trains[0].progress=25;
+    trains[0].riders=[passenger(2)];
+    return {before:JSON.stringify(lineTrack(0,1,0)),other:JSON.stringify(lineTrack(1,2,0))};
+  });
+  const bendFrom=await world([380,260]), bendTo=await world([380,150]);
+  await page.mouse.move(bendFrom.x,bendFrom.y);
+  await page.mouse.down();
+  await page.mouse.move(bendTo.x,bendTo.y);
+  check(await page.evaluate(() => Boolean(drag?.bend)),'the alternate bend is previewed before release');
+  await page.mouse.up();
+  check(await page.evaluate(({before,other}) => lines[0].join()==='0,1,2,0' &&
+    JSON.stringify(lineTrack(0,1,0))!==before && JSON.stringify(lineTrack(1,2,0))===other &&
+    trains[0].riders[0].type===2 && trains[0].progress>0 && retiring.length===0 &&
+    JSON.stringify(linkPaths(replayFrames.at(-1).lines[0],replayFrames.at(-1).stations).forward[0])!==before,bendGesture),
+    'dragging a bend changes only its geometry and keeps the loop, train and replay intact');
+  await page.evaluate(() => {
+    start('London','normal');paused=true;inventory.crossings=12;
+    stations=[[230,150],[520,150],[520,390],[230,390]].map(([x,y],type) =>
+      ({x,y,type,capacity:6,waiting:[],pressure:0,born:-1}));
+    setRoute(0,[0,1,2,3,0]);setRoute(1,[1,2]);
+    Object.assign(trains[0],{progress:20,dwell:0});
+  });
+  const removeFrom=await world([380,150]), removeAt=await station(1);
+  await page.mouse.move(removeFrom.x,removeFrom.y);
+  await page.mouse.down();
+  await page.mouse.move(removeAt.x,removeAt.y);
+  check(await page.evaluate(() => drag?.removing && drag.draft.join()==='0,2,3,0'),
+    'dragging a ring segment to its adjacent station previews removal');
+  const removeAway=await world([400,270]);
+  await page.mouse.move(removeAway.x,removeAway.y);
+  await page.mouse.up();
+  check(await page.evaluate(() => lines[0].join()==='0,1,2,3,0'),'moving away cancels the station removal preview');
+  await dragThrough([removeFrom,removeAt]);
+  check(await page.evaluate(() => lines[0].join()==='0,2,3,0' && lines[1].join()==='1,2' && stations.length===4),
+    'dropping on the adjacent station removes only its stop on the edited line and keeps the loop');
+  check(await page.evaluate(() => {
+    if (retiring.length!==1 || retiring[0].removedTracks.map(track => edgeKey(track.from,track.to)).join()!=='0/1,1/2') return false;
+    for (let i=0;i<600 && retiring.length;i++) moveTrains(.05);
+    return retiring.length===0;
+  }),'both old links stay visible for the retiring train and clear after it finishes');
   check(await page.evaluate(() => {
     start('London','normal');paused=true;inventory.crossings=12;
     stations=[[100,100,0],[300,200,1],[500,300,2]].map(([x,y,type]) => ({x,y,type,capacity:6,waiting:[],pressure:0,born:-1}));
@@ -608,6 +736,48 @@ async page => {
     $('screen').close();
     return station.capacity===18 && stations.length===4 && stations.at(-1).capacity===4;
   }),'Paris has smaller stations, closer and faster spawns, and standard interchange capacity');
+  check(await page.evaluate(() => {
+    start('London','normal');paused=true;inventory.crossings=12;
+    nextStation=nextPassenger=Infinity;
+    setRoute(0,[0,1]);
+    const station=stations[0], other=stations[2], train=trains[0];
+    for (const stop of [station,other]) {
+      stop.waiting=Array.from({length:7},() => passenger(1));
+      stop.pressure=10;stop.over=8;
+    }
+    train.dwell=1;
+    simulate(.1);
+    if (station.pressure!==10 || station.over!==8 || other.pressure<=10) return false;
+    train.dwell=0;
+    simulate(.1);
+    if (Math.abs(station.pressure-10.1)>1e-8) return false;
+    station.waiting.length=0;
+    Object.assign(train,{dwell:1,progress:0});
+    const previous=station.pressure;
+    simulate(.1);
+    return Math.abs(station.pressure-(previous-.1))<1e-8;
+  }),'a stopped train pauses the crowding timer and recovery matches accumulation speed');
+  check(await page.evaluate(() => {
+    start('London','normal');paused=true;nextStation=nextPassenger=Infinity;
+    const [urgent,regular]=stations;
+    for (const station of [urgent,regular]) {
+      station.waiting=Array.from({length:7},() => passenger(1));
+      station.over=10;
+    }
+    urgent.pressure=44;regular.pressure=20;
+    upgrade();$('screen').close();
+    if (urgent.expiryLimit!==49 || regular.expiryLimit!==undefined || urgent.pressure!==44) return false;
+    simulate(2);
+    if (phase!=='play' || urgent.pressure!==46 || regular.pressure!==22) return false;
+    urgent.waiting.length=0;
+    simulate(1);
+    if (urgent.pressure!==44 || urgent.expiryLimit!==undefined) return false;
+    urgent.waiting=Array.from({length:7},() => passenger(1));
+    simulate(1);
+    const ended=phase==='ended' && collapseStation===urgent;
+    $('screen').close();
+    return ended;
+  }),'the new week guarantees five remaining seconds only for critical stations and preserves pressure');
   check(await page.evaluate(() => {
     start('London','normal');paused=true;inventory.crossings=12;inventory.lines=3;
     stations=[[100,100,0],[300,200,1],[500,300,2],[100,300,0]].map(([x,y,type]) => ({x,y,type,capacity:6,waiting:[],pressure:0,born:-1}));
@@ -726,12 +896,15 @@ async page => {
     start('Paris','normal');
     paused=true;time=8;score=12;inventory.crossings=12;
     setRoute(0,[0,1]);setRoute(1,[1,2]);
+    const diagonal=trackBetween(stations[0],stations[1],null,true);
+    changeBend(0,{key:edgeKey(0,1),choice:!samePath(diagonal,lineTrack(0,1,0))});
     trains[1].progress=9;
     trains[1].riders=[passenger(2)];
     setRoute(1,[]);
     stations[0].waiting=[passenger(1)];
     nextStation=11.2;nextPassenger=10;selected=0;
-    return {routes:JSON.stringify(lines),cars:trains.length,last:retiring[0].progress,frames:replayFrames.length};
+    return {routes:JSON.stringify(lines),cars:trains.length,last:retiring[0].progress,frames:replayFrames.length,
+      bend:JSON.stringify(lineTrack(0,1,0))};
   });
   await page.keyboard.press('Escape');
   await page.getByRole('button',{name:'城市选择',exact:true}).click();
@@ -740,7 +913,8 @@ async page => {
   check(await page.evaluate(saved => cityKey==='Paris' && mode==='normal' && paused && time===8 && score===12 &&
     nextStation===11.2 && nextPassenger===10 && JSON.stringify(lines)===saved.routes && trains.length===saved.cars &&
     retiring[0].progress===saved.last && retiring[0].riders[0].type===2 && stations[0].waiting[0].type===1 &&
-    replayFrames.length===saved.frames && lineTrack(0,1,0).length>1 && !localStorage.getItem(savedGameKey),saved),
+    replayFrames.length===saved.frames && JSON.stringify(lineTrack(0,1,0))===saved.bend &&
+    typeof lines[0].bends?.['0/1']==='boolean' && !localStorage.getItem(savedGameKey),saved),
     'reload resumes the last parked game with its network, retiring train, riders and timers');
   check(errors.length===0,errors.join(', '));
 }

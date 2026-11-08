@@ -23,16 +23,17 @@ canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: 
 button { padding: 0; border: 0; background: none; color: inherit; cursor: pointer; font: inherit }
 button:disabled { cursor: default }
 button:focus-visible { outline: 2px solid #21688a; outline-offset: 4px }
-header { position: absolute; right: 20px; top: 16px }
+header { position: absolute; right: 18px; top: 10px }
 .stats { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700 }
 .stats > svg { width: 20px; height: 20px; fill: currentColor; margin-right: 5px }
 #day { white-space: nowrap }
 #clockControls { position: relative }
-#clock { display: block; position: relative; width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--ink); background: repeating-conic-gradient(from -1deg,var(--ink) 0 2deg,transparent 2deg 30deg) }
+#clock { display: block; position: relative; width: 36px; height: 36px; border-radius: 50%; border: 3px solid var(--ink); background: repeating-conic-gradient(from -1deg,var(--ink) 0 2deg,transparent 2deg 30deg) }
 #clock::before { content: ''; position: absolute; inset: 3px; border-radius: 50%; background: var(--paper) }
 #clock::after { content: ''; position: absolute; left: calc(50% - 1px); top: 4px; width: 2px; height: calc(50% - 4px); transform-origin: center bottom; transform: rotate(var(--clock-angle,0deg)); background: var(--ink) }
-#time { position: absolute; top: 36px; right: 0; display: flex; gap: 6px; z-index: 1 }
-#time button { background: var(--ink); color: white; padding: 6px 8px; min-width: 32px }
+#time { position: absolute; top: 100%; right: 0; display: grid; justify-items: center; z-index: 1 }
+#time button { color:var(--ink); width:36px; height:28px; white-space:nowrap }
+#time button[aria-pressed=true] { opacity:.48 }
 footer { position: absolute; bottom: 15px; left: 0; right: 0; pointer-events: none; text-align: center }
 #hint { display: inline-block; margin: 0 0 7px; padding: 2px 6px; font-size: 12px; color: var(--muted); background: color-mix(in srgb,var(--paper) 86%,transparent) }
 .toolbar,#vehicles,nav { display: flex; align-items: center; justify-content: center; gap: clamp(6px,1vw,13px) }
@@ -131,7 +132,6 @@ dialog[data-kind=upgrade] #choices button:disabled { opacity:.44 }
 dialog[data-kind=pause] #kicker:empty { display:none }
 dialog[data-kind=pause] #choices { flex-direction:column; align-items:start; gap:6px }
 :root.night { color-scheme:dark; --paper:#170e16; --ink:#f0e8e3; --muted:#cdc2bc; --blue:#326985 }
-.night #time button { color:var(--paper) }
 .night #hint { background:color-mix(in srgb,var(--paper) 86%,transparent) }
 .night .asset { color:#f0e8e3; background:#514651 }
 .night .asset:disabled,.night #crossings { color:#261f26; background:#8c8684 }
@@ -211,7 +211,7 @@ dialog[data-kind=creative] #choices button[aria-pressed=true] { outline:2px soli
   <footer>
     <p id="hint" aria-live="polite"></p>
     <button id="creativeEdit" aria-pressed="false" hidden>编辑车站</button>
-    <button id="toolbarToggle" aria-label="显示或收起工具栏" aria-controls="toolbar" aria-expanded="true"></button>
+    <button id="toolbarToggle" aria-label="显示或收起工具栏" aria-controls="toolbar" aria-expanded="true" aria-keyshortcuts="ArrowUp ArrowDown"></button>
     <div class="toolbar" id="toolbar">
       <div id="vehicles">
         <button id="train" class="asset" aria-label="增加机车" title="给当前线路增加机车"><svg aria-hidden="true"><use href="#locomotive"/></svg><span id="trainCount"></span></button>
@@ -429,8 +429,7 @@ function reset(key) {
   retiring = [];
   highlightUntil = 0;
   focusedLine = null;
-  $('toolbarToggle').setAttribute('aria-expanded','true');
-  $('toolbar').inert=false;
+  setToolbarExpanded(true);
   inventory = {lines:3, trains:3, cars:0, crossings:3, interchanges:0}; // 开局 3 个过河通道（试玩构建里前三次跨河都被接受）
   if (mode==='creative') enableCreative();
   time = score = selected = 0;
@@ -496,7 +495,7 @@ function riverCoordinates(point,city) {
 // 两站之间的连线由一段直线和一段 45 度斜线组成。默认从左侧的站出发先走斜线；延长线路时，
 // 若给出进入方向，就选第一段与进入方向夹角更小的走法，使线路在车站处更平滑。
 // shortcut: 原版 ProximityToMatchIncomingDirection 为 65，网页没有这个距离门槛，总是取转角更小的一种。
-function pathBetween(a,b,incoming=null) {
+function pathBetween(a,b,incoming=null,bendChoice) {
   const dx = b.x-a.x, dy = b.y-a.y, ax = Math.abs(dx), ay = Math.abs(dy);
   const diagonal = Math.min(ax,ay), straight = Math.max(ax,ay)-diagonal;
   const diagonalBend = {x:a.x + Math.sign(dx)*diagonal, y:a.y + Math.sign(dy)*diagonal};
@@ -512,7 +511,7 @@ function pathBetween(a,b,incoming=null) {
     const gain = turn(diagonalBend)-turn(straightBend);
     if (Math.abs(gain)>1e-6) diagonalFirst = gain>0;
   }
-  return [a,diagonalFirst ? diagonalBend : straightBend,b];
+  return [a,(bendChoice ?? diagonalFirst) ? diagonalBend : straightBend,b];
 }
 
 function looped(route) {
@@ -526,10 +525,9 @@ function stepIndex(route, stop, direction) {
   return looped(route) ? (stop+direction+size)%size : stop+direction;
 }
 
-function crossings(route) {
+function crossings(route,paths=route.length>1 ? linkPaths(route).forward : []) {
   const city=cities[cityKey];
   let total = 0;
-  const paths=route.length>1 ? linkPaths(route).forward : [];
   for (let i=1;i<route.length;i++) {
     const points=paths[i-1].map(p => riverCoordinates(p,city));
     for (const river of waterways(city)) {
@@ -583,7 +581,7 @@ function usedCrossings(replace=-1, replacement=[], pending=retiring) {
       const key=edgeKey(train.from,train.to);
       if (occupied.has(key)) continue;
       occupied.add(key);
-      total+=crossings([train.from,train.to]);
+      total+=crossings([train.from,train.to],[train.points]);
     }
     return total;
   },0);
@@ -593,7 +591,39 @@ function passenger(type) {
   return {type, queuedAt:time, waiting:0, distance:0, boardings:0};
 }
 
+// shortcut: 原版音效与配乐有版权，无法取得；这里用 Web Audio 合成近似的柔和五声音阶，要更接近原版需换成自带采样。
+let sound=true, audio, lastNote=0;
+try {sound=localStorage.getItem('metro-sound')!=='false';} catch {}
+const pentatonic=[262,294,330,392,440,523,587,659];
+function tone(freq,delay=0,length=.6,volume=.06) {
+  if (!sound) return;
+  try {
+    audio??=new AudioContext();
+    if (audio.state==='suspended') audio.resume();
+    const t=audio.currentTime+delay, osc=audio.createOscillator(), gain=audio.createGain();
+    osc.frequency.value=freq;
+    gain.gain.setValueAtTime(0,t);
+    gain.gain.linearRampToValueAtTime(volume,t+.01);
+    gain.gain.exponentialRampToValueAtTime(.0001,t+length);
+    osc.connect(gain).connect(audio.destination);
+    osc.start(t);osc.stop(t+length);
+  } catch {}
+}
+// shortcut: 背景音是随机的长音垫（只在 simulate 运行时发声，暂停即静音），不是原版那样的编曲。
+let nextAmbient=0;
+function ambient() {
+  const now=performance.now();
+  if (now<nextAmbient) return;
+  nextAmbient=now+2500+Math.random()*3500;
+  const f=pentatonic[Math.random()*5|0]/2;
+  tone(f,0,5,.025);
+  if (Math.random()<.4) tone(f*1.5,.4,5,.015);
+}
+const chord=(notes,gap,length,volume) => notes.forEach((f,i) => tone(f,i*gap,length,volume));
+
 function deliver(rider) {
+  const now=performance.now();
+  if (now-lastNote>80) {lastNote=now;tone(pentatonic[Math.random()*pentatonic.length|0]);}
   score++;
   recentTrips.push(time);
   daily.trips++;
@@ -632,6 +662,14 @@ function dispatchIfEmpty(line) {
 function setRoute(index, route, split=null) {
   if (route.length<2) route=[];
   const old=lines[index];
+  if (old.bends) {
+    const bends={};
+    for (let i=1;i<route.length;i++) {
+      const key=edgeKey(route[i-1],route[i]);
+      if (Object.hasOwn(old.bends,key)) bends[key]=old.bends[key];
+    }
+    if (Object.keys(bends).length) route.bends=bends;
+  }
   if (mode==='extreme' && old.length) {
     const offset=route.indexOf(old[0]);
     const keepsTrack=offset>=0 && old.every((id,i) => route[offset+i]===id);
@@ -658,6 +696,14 @@ function setRoute(index, route, split=null) {
   const deferred=assignments.filter(({train,direction}) => !direction && train.progress>0).map(({train,from,to}) => ({
     ...train, from, to, points:lineTrack(from,to,index),
   }));
+  if (deferred.length) {
+    const replacementEdges=indexTracks([route]), removed=[];
+    for (let i=1;i<old.length;i++) {
+      const from=old[i-1], to=old[i];
+      if (!replacementEdges.has(edgeKey(from,to))) removed.push({from,to,points:lineTrack(from,to,index)});
+    }
+    for (const train of deferred) train.removedTracks=removed;
+  }
   const pending=retiring.concat(deferred);
   if (usedCrossings(index,route,pending)>inventory.crossings) {
     notify('过河通道已用完。拆除一条已有通道，或在本周末选择更多通道。');
@@ -730,8 +776,22 @@ function removeCreativeStation(id) {
     return false;
   });
   stations.splice(id,1);
-  lines=lines.map(route => route.map(station => station>id ? station-1 : station));
+  lines=lines.map(route => {
+    const mapped=route.map(station => station>id ? station-1 : station);
+    if (route.bends) {
+      mapped.bends={};
+      for (let i=1;i<route.length;i++) {
+        const key=edgeKey(route[i-1],route[i]);
+        if (Object.hasOwn(route.bends,key)) mapped.bends[edgeKey(mapped[i-1],mapped[i])]=route.bends[key];
+      }
+    }
+    return mapped;
+  });
   retiring.forEach(train => {
+    if (train.removedTracks) {
+      train.removedTracks=train.removedTracks.filter(track => track.from!==id && track.to!==id)
+        .map(({from,to,points}) => ({from:from>id ? from-1 : from,to:to>id ? to-1 : to,points}));
+    }
     if (train.from>id) train.from--;
     if (train.to>id) train.to--;
   });
@@ -774,14 +834,22 @@ function creativePointer(point,id) {
   editCreativeStation(stations.length-1);
 }
 
+function departureFromDrop(line,{index,progress}) {
+  const route=lines[line], from=route[index-1], to=route[index];
+  const forward=progress<=trackLength(lineTrack(from,to,line))/2;
+  const stop=forward ? index-1 : index%routeSize(route);
+  return {stop,direction:forward ? 1 : -1,progress:0,velocity:0,dwell:dwellAt(route[stop])};
+}
+
 function addTrain(line,placement=null) {
   if (!inventory.trains || !lines[line].length) return;
   const existing = trains.filter(t => t.line === line).length;
   if (existing >= trainLimit()) return;
-  const stop=placement ? placement.index-1 : existing%2 ? routeSize(lines[line])-1 : 0;
-  const direction=placement || stop===0 ? 1 : -1;
-  trains.push({line,stop,direction,progress:placement?.progress ?? 0,velocity:0,
-    dwell:placement ? 0 : .6+Math.floor(existing/2)*2,riders:[],cars:0,born:time});
+  const stop=existing%2 ? routeSize(lines[line])-1 : 0;
+  const departure=placement ? departureFromDrop(line,placement) : {
+    stop,direction:stop===0 ? 1 : -1,progress:0,velocity:0,dwell:.6+Math.floor(existing/2)*2,
+  };
+  trains.push({line,...departure,riders:[],cars:0,born:time});
   inventory.trains--;
   updateHUD();
 }
@@ -1015,8 +1083,8 @@ function moveTrains(dt) {
 
 function distance(a,b) { return Math.hypot(a.x-b.x,a.y-b.y); }
 
-function trackBetween(a,b,incoming=null) {
-  const [,bend] = pathBetween(a,b,incoming);
+function trackBetween(a,b,incoming=null,bendChoice) {
+  const [,bend] = pathBetween(a,b,incoming,bendChoice);
   const first = distance(a,bend), last = distance(bend,b);
   const radius = Math.min(cornerRadius,first/2,last/2);
   if (!radius) return [a,b];
@@ -1029,12 +1097,14 @@ function trackBetween(a,b,incoming=null) {
 }
 
 // 沿线路依次生成每段连线，后一段的走法参照前一段的进入方向。
-function routePaths(points) {
+function routePaths(points,ids=[]) {
   const paths=[];
   let incoming=null;
   for (let i=1;i<points.length;i++) {
+    const from=ids[i-1], to=ids[i], stored=ids.bends?.[edgeKey(from,to)];
+    const bend=stored===undefined ? undefined : (from<to ? stored : !stored);
     const path=trackBetween(points[i-1],points[i],incoming);
-    paths.push(path);
+    paths.push(bend===undefined ? path : trackBetween(points[i-1],points[i],incoming,bend));
     const end=path.at(-1), before=path.at(-2), length=distance(end,before);
     incoming=length ? {x:(end.x-before.x)/length,y:(end.y-before.y)/length} : null;
   }
@@ -1046,10 +1116,10 @@ const pathCache = new WeakMap();
 function linkPaths(ids,mapStations=stations) {
   const signature=ids.join();
   const hit=pathCache.get(ids);
-  if (hit && hit.signature===signature && hit.stations===mapStations &&
+  if (hit && hit.signature===signature && hit.stations===mapStations && hit.bends===ids.bends &&
     ids.every((id,i) => mapStations[id]?.x===hit.coords[i*2] && mapStations[id]?.y===hit.coords[i*2+1])) return hit;
-  const forward=routePaths(ids.map(id => mapStations[id]));
-  const entry={signature,stations:mapStations,coords:ids.flatMap(id => [mapStations[id].x,mapStations[id].y]),
+  const forward=routePaths(ids.map(id => mapStations[id]),ids);
+  const entry={signature,stations:mapStations,bends:ids.bends,coords:ids.flatMap(id => [mapStations[id].x,mapStations[id].y]),
     forward,backward:forward.map(path => [...path].reverse())};
   pathCache.set(ids,entry);
   return entry;
@@ -1198,6 +1268,7 @@ function spawnStation(position) {
   const type=nextStationType();
   const station={x:position.x,y:position.y,type,waiting:[],pressure:0,capacity:cities[cityKey].stationCapacity ?? 6,born:time,centrality:position.centrality ?? 1};
   stations.push(station);
+  chord([196,262],.12,.8,.05);
   // shortcut: 原版 CityPlanner.PEEP_SPAWN_BOOST_COOLDOWN 只给出 6 秒冷却，网页取"新站立即来一位乘客"。
   if (mode!=='creative' && time>=nextSpawnBoost) {addPassengerAt(station);nextSpawnBoost=time+spawnBoostCooldown;}
   connectStationOnTrack(station);
@@ -1268,7 +1339,10 @@ async function animateReward(icon,target) {
 
 function upgrade() {
   week++;
-  stations.forEach(s => {s.grace=weekGrace;});
+  chord([262,330,392,523],.12,.9,.05);
+  for (const station of stations) {
+    if (station.pressure>=overloadLimit-weekGrace) station.expiryLimit=station.pressure+weekGrace;
+  }
   const options = [
     {label:'增配车厢',description:'加挂一节车厢，多载 6 位乘客。',symbol:'carriage',target:$('car'),apply:() => {inventory.cars++;}},
     {label:'过河通道 ×2',description:'增建两条可穿越水域的轨道。',symbol:'tunnel',count:2,target:$('crossings'),apply:() => {inventory.crossings+=2;}},
@@ -1534,7 +1608,8 @@ $('replayGif').onclick=exportReplayGif;
 
 function recordReplay() {
   const frame={time,stations:stations.map(({x,y,type,capacity}) => ({x,y,type,capacity})),
-    lines:lines.map(route => route.slice())};
+    lines:lines.map(route => Object.assign(route.slice(),{bends:route.bends})),
+    bends:lines.map(route => route.bends)};
   replayFrames.push(frame);
 }
 
@@ -1753,6 +1828,7 @@ function checkExtremeChallenge() {
 }
 
 function simulate(dt) {
+  ambient();
   if (lesson) {simulateTutorial(dt);return;}
   time += dt;
   if (mode==='extreme' && upcomingStation===undefined && time>=nextStation-stationPreview) upcomingStation=findStationPosition();
@@ -1775,15 +1851,21 @@ function simulate(dt) {
   else if (firstRecent>0) recentTrips.splice(0,firstRecent);
   checkExtremeChallenge();
   const connected=new Set(lines.flat());
+  const atStation=new Set(trains.filter(train => train.dwell>0).map(train => lines[train.line][train.stop]));
   stations.forEach((s,id) => {s.idle=connected.has(id) ? 0 : (s.idle ?? 0)+dt;});
-  for (const s of stations) {
+  for (const [id,s] of stations.entries()) {
     const overloaded=mode!=='endless' && mode!=='creative' && s.waiting.length>s.capacity;
+    if (overloaded && atStation.has(id)) continue;
     s.over=overloaded ? (s.over ?? 0)+dt : 0;
-    if (s.grace>0) s.grace-=dt;
-    s.pressure = overloaded && !(s.grace>0) && (s.pressure>0 || s.over>overloadGrace)
-      ? Math.min(overloadLimit,s.pressure+dt) : Math.max(0,s.pressure-2*dt);
-    if (mode!=='endless' && mode!=='creative' && s.pressure>=overloadLimit) {
+    if (!overloaded) {
+      s.pressure=Math.max(0,Math.min(s.pressure,overloadLimit)-dt);
+      delete s.expiryLimit;
+    } else if (s.pressure>0 || s.over>overloadGrace) {
+      s.pressure+=dt;
+    }
+    if (overloaded && s.pressure>=(s.expiryLimit ?? overloadLimit)) {
       phase = 'ended';
+      chord([330,262,220,165],.25,1.2,.07);
       collapseStation = s;
       newBest = score>bestScore();
       const record = Math.max(score,bestScore());
@@ -1904,6 +1986,7 @@ function leaveGame() {
       cityKey,mode,stations,lines,trains,retiring,inventory,time,nextStation,nextPassenger,week,score,paused,speed,selected,
       nextSpawnBoost,lastTouch,eligibleExtreme,upcomingStation,scheduleIndex,specialsSpawned,specialPool,stationQueue,
       stationGap,recentTrips,scenicMilestone,nextEfficiency,history,daily,replayFrames,lesson,
+      bends:lines.map(route => route.bends),
     }));
     parkedSaveWritten=true;
   } catch {}
@@ -1932,6 +2015,10 @@ function resumeGame(game) {
     ({stations,lines,trains,retiring,inventory,time,nextStation,nextPassenger,week,score,paused,speed,selected,
       nextSpawnBoost,lastTouch,eligibleExtreme,upcomingStation,scheduleIndex,specialsSpawned,specialPool,stationQueue,
       stationGap,recentTrips,scenicMilestone,nextEfficiency,history,daily,replayFrames,lesson}=game);
+    for (const frame of [game,...replayFrames]) {
+      frame.lines.forEach((route,index) => {route.bends=frame.bends?.[index] ?? undefined;});
+    }
+    if (mode==='creative') enableCreative();
     if (lesson) document.documentElement.dataset.lesson=String(lesson.stage);
     rebuildTracks();
     updateCamera();
@@ -1972,12 +2059,19 @@ function showPauseMenu() {
       showPauseMenu();
       $('choices').children[2].focus();
     }],
+    [sound ? '声音：开' : '声音：关',() => {
+      sound=!sound;
+      try {localStorage.setItem('metro-sound',String(sound));} catch {}
+      showPauseMenu();
+      $('choices').children[3].focus();
+    }],
     [lesson ? '跳过教程' : '重新开始',() => start(cityKey,mode)],
     ['城市选择',leaveGame],
     ['照片模式',() => showPhoto(showPauseMenu)],
   ],'','pause');
   $('choices').children[1].setAttribute('aria-pressed',String(night));
   $('choices').children[2].setAttribute('aria-pressed',String(colorblind));
+  $('choices').children[3].setAttribute('aria-pressed',String(sound));
 }
 
 function showMenu() {
@@ -2137,7 +2231,7 @@ function terminatorStubs(ids,mapStations=stations) {
 }
 
 // 点在某条线路终端（横杆或延伸段）附近时返回该线路、端点车站和方向。
-function terminatorAt(point) {
+function terminatorAt(point,barOnly=false) {
   const limit=touchInput ? reach.terminatorTouch : reach.terminator;
   const half=terminator.width/2;
   let best=Math.max(limit,8/view.scale), result=null;
@@ -2145,7 +2239,8 @@ function terminatorAt(point) {
     if (route.length<2 || looped(route)) return;
     const stubs=terminatorStubs(route);
     stubs.forEach(({end,dx,dy,x,y},k) => {
-      const segments=[[end,{x,y}],[{x:x-dy*half,y:y+dx*half},{x:x+dy*half,y:y-dx*half}]];
+      const bar=[{x:x-dy*half,y:y+dx*half},{x:x+dy*half,y:y-dx*half}];
+      const segments=barOnly ? [bar] : [[end,{x,y}],bar];
       for (const [a,b] of segments) {
         const length=distance(a,b), t=Math.max(0,Math.min(1,((point.x-a.x)*(b.x-a.x)+(point.y-a.y)*(b.y-a.y))/length**2));
         const d=Math.hypot(point.x-a.x-t*(b.x-a.x),point.y-a.y-t*(b.y-a.y));
@@ -2156,15 +2251,46 @@ function terminatorAt(point) {
   return result;
 }
 
-function drawRoute(route,index,preview=false,closed=false,riverClip=null,source=null) {
+function strokeTrack(trackPoints,riverClip) {
+  ctx.lineWidth=routeWidth;
+  ctx.lineJoin='round';
+  ctx.lineCap='round';
+  if (!riverClip || trackPoints.length<2) {ctx.stroke();return;}
+  ctx.save();
+  const land=new Path2D(riverClip);
+  land.rect(-10000,-10000,20000,20000);
+  ctx.clip(land,'evenodd');
+  ctx.stroke();
+  ctx.restore();
+  ctx.save();
+  ctx.clip(riverClip);
+  ctx.setLineDash([15*unit,8*unit]);
+  ctx.lineCap='butt';
+  ctx.lineWidth=routeWidth/3;
+  for (const side of [-1,1]) {
+    const rail=new Path2D();
+    const points=offsetLine(trackPoints,side*routeWidth/3);
+    rail.moveTo(...points[0]);
+    for (const point of points.slice(1)) rail.lineTo(...point);
+    ctx.stroke(rail);
+  }
+  ctx.restore();
+}
+
+function drawRoute(route,index,preview=false,closed=false,riverClip=null,source=null,previewBase=[],previewPaths) {
   const ids=(source?.frame.lines ?? lines)[index], mapStations=source?.frame.stations ?? stations;
   if (route.length < 2) return;
   ctx.beginPath();
   ctx.moveTo(route[0].x,route[0].y);
   const trackPoints=[[route[0].x,route[0].y]];
-  const previewPaths=preview ? routePaths(route) : null;
+  if (preview) previewPaths ??= routePaths(route);
   for (let i=1;i<route.length;i++) {
     const track = preview ? previewPaths[i-1] : lineTrack(ids[i-1],ids[i],index,mapStations,source?.edges ?? edgeLines,source?.frame.lines ?? lines);
+    if (preview && previewBase.some((station,j) => station===route[i-1] && previewBase[j+1]===route[i])) {
+      ctx.moveTo(route[i].x,route[i].y);
+      trackPoints.push([route[i].x,route[i].y]);
+      continue;
+    }
     for (const p of track.slice(1)) {
       const last=trackPoints.at(-1);
       if (p.x===last[0] && p.y===last[1]) continue;
@@ -2172,32 +2298,9 @@ function drawRoute(route,index,preview=false,closed=false,riverClip=null,source=
       trackPoints.push([p.x,p.y]);
     }
   }
-  ctx.lineWidth=routeWidth;
-  ctx.lineJoin='round';
-  ctx.lineCap='round';
   ctx.strokeStyle=colors[index];
   ctx.globalAlpha=preview ? .52 : 1;
-  if (riverClip && !preview && trackPoints.length>1) {
-    ctx.save();
-    const land=new Path2D(riverClip);
-    land.rect(-10000,-10000,20000,20000);
-    ctx.clip(land,'evenodd');
-    ctx.stroke();
-    ctx.restore();
-    ctx.save();
-    ctx.clip(riverClip);
-    ctx.setLineDash([15*unit,8*unit]);
-    ctx.lineCap='butt';
-    ctx.lineWidth=routeWidth/3;
-    for (const side of [-1,1]) {
-      const rail=new Path2D();
-      const points=offsetLine(trackPoints,side*routeWidth/3);
-      rail.moveTo(...points[0]);
-      for (const point of points.slice(1)) rail.lineTo(...point);
-      ctx.stroke(rail);
-    }
-    ctx.restore();
-  } else ctx.stroke();
+  strokeTrack(trackPoints,preview ? null : riverClip);
   if (!preview) {
     const served=new Set(ids);
     const bypass=new Path2D();
@@ -2333,25 +2436,28 @@ function paint(clean=false,source=null,target=canvas) {
   ctx.stroke(riverClip);
   const ghostEdges=new Set();
   for (const train of source ? [] : retiring) {
-    const key=train.line+'/'+edgeKey(train.from,train.to);
-    if (ghostEdges.has(key)) continue;
-    ghostEdges.add(key);
     ctx.save();
-    ctx.beginPath();
-    ctx.moveTo(train.points[0].x,train.points[0].y);
-    for (const p of train.points.slice(1)) ctx.lineTo(p.x,p.y);
-    ctx.lineWidth=6;
     ctx.strokeStyle=colors[train.line];
-    ctx.globalAlpha=.32;
-    ctx.setLineDash([5,4]);
-    ctx.stroke();
+    ctx.globalAlpha=.5;
+    for (const {from,to,points} of train.removedTracks?.length ? train.removedTracks : [train]) {
+      const key=train.line+'/'+edgeKey(from,to);
+      if (ghostEdges.has(key)) continue;
+      ghostEdges.add(key);
+      ctx.beginPath();
+      ctx.moveTo(points[0].x,points[0].y);
+      for (const p of points.slice(1)) ctx.lineTo(p.x,p.y);
+      strokeTrack(points.map(({x,y}) => [x,y]),riverClip);
+    }
     ctx.restore();
   }
   mapLines.forEach((route,index) => drawRoute(route.map(id => mapStations[id]),index,false,looped(route),riverClip,source));
   if (!clean && drag?.point) {
     const points = drag.draft.map(id => stations[id]);
     if (drag.insert !== null) {
-      if (drag.draft===drag.route) points.splice(drag.insert,0,drag.point);
+      if (drag.bend) {
+        const track=drag.bend.track;
+        drawRoute([track[0],track.at(-1)],drag.line,true,false,null,null,[],[track]);
+      }
     } else if (!looped(drag.draft)) {
       const end = drag.head ? points[0] : points.at(-1);
       if (distance(drag.point,end)>1) {
@@ -2359,7 +2465,9 @@ function paint(clean=false,source=null,target=canvas) {
         else points.push(drag.point);
       }
     }
-    drawRoute(points,drag.line,true);
+    if (!drag.removing && (drag.insert===null || drag.draft!==drag.route)) {
+      drawRoute(points,drag.line,true,false,null,null,lines[drag.line].map(id => stations[id]));
+    }
   }
   if (!clean && mode==='extreme' && upcomingStation) {
     const {x,y}=upcomingStation;
@@ -2377,7 +2485,7 @@ function paint(clean=false,source=null,target=canvas) {
       glow.addColorStop(1,night ? 'rgba(240,232,227,0)' : 'rgba(58,50,50,0)');
       ctx.beginPath();ctx.arc(s.x,s.y,reachOut,0,2*Math.PI);ctx.fillStyle=glow;ctx.fill();
     } else if (!clean && s.pressure>0) {
-      ctx.beginPath();ctx.moveTo(s.x,s.y);ctx.arc(s.x,s.y,s===collapseStation ? 27 : 23,-Math.PI/2,-Math.PI/2+2*Math.PI*s.pressure/overloadLimit);
+      ctx.beginPath();ctx.moveTo(s.x,s.y);ctx.arc(s.x,s.y,s===collapseStation ? 27 : 23,-Math.PI/2,-Math.PI/2+2*Math.PI*Math.min(1,s.pressure/overloadLimit));
       ctx.fillStyle=night ? '#f0e8e34a' : '#24282bb5';ctx.fill();
     }
     const growth = source ? 1 : Math.min(1,Math.max(.1,(time-s.born)/.65));
@@ -2486,22 +2594,63 @@ function stationAt(point,dragging=false) {
   return nearest;
 }
 
-function segmentAt(point,route,line,maxDistance) {
-  let best=maxDistance, index=null, progress=0;
-  for (let i=1;i<route.length;i++) {
-    const points=lineTrack(route[i-1],route[i],line);
-    let traveled=0;
-    for (let j=1;j<points.length;j++) {
-      const a=points[j-1], b=points[j], dx=b.x-a.x, dy=b.y-a.y;
-      const length=distance(a,b);
-      if (!length) continue;
-      const t=Math.max(0,Math.min(1,((point.x-a.x)*dx+(point.y-a.y)*dy)/length**2));
-      const d=Math.hypot(point.x-a.x-t*dx,point.y-a.y-t*dy);
-      if (d<best) {index=i;best=d;progress=traveled+t*length;}
-      traveled+=length;
-    }
+function nearestOnTrack(point,points) {
+  let best=Infinity, progress=0, traveled=0;
+  for (let j=1;j<points.length;j++) {
+    const a=points[j-1], b=points[j], dx=b.x-a.x, dy=b.y-a.y;
+    const length=distance(a,b);
+    if (!length) continue;
+    const t=Math.max(0,Math.min(1,((point.x-a.x)*dx+(point.y-a.y)*dy)/length**2));
+    const d=Math.hypot(point.x-a.x-t*dx,point.y-a.y-t*dy);
+    if (d<best) {best=d;progress=traveled+t*length;}
+    traveled+=length;
   }
-  return {index,distance:best,progress};
+  return {distance:best,progress};
+}
+
+function segmentAt(point,route,line,maxDistance) {
+  let hit={index:null,distance:maxDistance,progress:0};
+  for (let i=1;i<route.length;i++) {
+    const match=nearestOnTrack(point,lineTrack(route[i-1],route[i],line));
+    if (match.distance<hit.distance) hit={index:i,...match};
+  }
+  return hit;
+}
+
+function alternateBend(gesture,point) {
+  const {insert,line,origin}=gesture;
+  if (insert===null || gesture.draft!==gesture.route || distance(point,origin)*view.scale<reach.moveThreshold) return null;
+  const route=lines[line], from=route[insert-1], to=route[insert];
+  const a=stations[from], b=stations[to];
+  const diagonal=trackBetween(a,b,null,true), straight=trackBetween(a,b,null,false);
+  if (samePath(diagonal,straight)) return null;
+  const current=linkPaths(route).forward[insert-1];
+  const chooseDiagonal=!samePath(diagonal,current);
+  const track=chooseDiagonal ? diagonal : straight;
+  const reachToBend=nearestOnTrack(point,track).distance*view.scale;
+  if (reachToBend>32 || nearestOnTrack(point,current).distance*view.scale-reachToBend<8) return null;
+  return {track,key:edgeKey(from,to),choice:from<to ? chooseDiagonal : !chooseDiagonal};
+}
+
+function changeBend(line,{key,choice}) {
+  const route=lines[line], candidate=route.slice();
+  candidate.bends={...route.bends,[key]:choice};
+  if (usedCrossings(line,candidate)>inventory.crossings) {
+    notify('过河通道已用完，无法改变这段走向。');
+    return;
+  }
+  const trackFor=train => {
+    const route=lines[train.line];
+    return lineTrack(route[train.stop],route[stepIndex(route,train.stop,train.direction)],train.line);
+  };
+  const fractions=trains.map(train => train.progress/trackLength(trackFor(train)) || 0);
+  route.bends=candidate.bends;
+  trains.forEach((train,i) => {train.progress=Math.min(1,fractions[i])*trackLength(trackFor(train));});
+  selected=line;
+  rebuildTracks();
+  recordReplay();
+  updateLines();
+  updateHUD();
 }
 
 function vehicleAt(point) {
@@ -2515,13 +2664,14 @@ function vehicleAt(point) {
   return result;
 }
 
-function trackAt(point,needsTrain=false) {
-  let best=Math.max(reach.assetDrop,14/view.scale), result=null;
-  lines.forEach((route,line) => {
-    if (needsTrain && !trains.some(train => train.line===line)) return;
-    const match=segmentAt(point,route,line,best);
+function trackAt(point,needsTrain=false,limit=Math.max(reach.assetDrop,14/view.scale)) {
+  let best=limit, result=null;
+  for (let offset=0;offset<inventory.lines;offset++) {
+    const line=(selected+offset)%inventory.lines;
+    if (needsTrain && !trains.some(train => train.line===line)) continue;
+    const match=segmentAt(point,lines[line],line,best);
     if (match.index!==null) {result={line,...match};best=match.distance;}
-  });
+  }
   return result;
 }
 
@@ -2539,7 +2689,7 @@ function applyVehicleMove(train) {
     const track=segmentAt(move.point,lines[move.line],move.line,Math.max(reach.assetDrop,14/view.scale));
     if (track.index===null || (move.line!==train.line && trains.filter(t => t.line===move.line).length>=trainLimit())) return;
     unload(train,origin);
-    Object.assign(train,{line:move.line,stop:track.index-1,direction:1,progress:track.progress,velocity:0,dwell:0});
+    Object.assign(train,{line:move.line,...departureFromDrop(move.line,track)});
     delete train.approach;
   }
   updateHUD();
@@ -2573,7 +2723,7 @@ canvas.onpointerdown = event => {
   lastTouch=time;
   const point=pointerPoint(event);
   let station=stationAt(point);
-  const grabbed=station<0 ? terminatorAt(point) : null;
+  const grabbed=station<0 || distance(point,stations[station])>15 ? terminatorAt(point,station>=0) : null;
   if (grabbed && !(mode==='creative' && $('creativeEdit').getAttribute('aria-pressed')==='true') && $('interchange').getAttribute('aria-pressed')!=='true') {
     station=grabbed.id;
     if (grabbed.line!==selected) {selected=grabbed.line;highlightUntil=performance.now()+1500;updateLines();updateHUD();}
@@ -2593,33 +2743,65 @@ canvas.onpointerdown = event => {
     return;
   }
   const route=lines[selected];
-  let insert=null, head=false, draft=route.slice(), line=selected;
+  let insert=null, head=false, draft=route.slice(), line=selected, reverseStart=null;
   if (station>=0) {
-    if (!route.length) draft=[station];
-    else if (!looped(route) && (station===route[0] || station===route.at(-1))) head=station===route[0];
-    else if (route.includes(station)) {
-      notify('拖动线段加站，或从端点调整线路');
-      return;
+    const empty=route.length ? lines.slice(0,inventory.lines).findIndex(path => !path.length) : selected;
+    const end=!looped(route) && (station===route[0] || station===route.at(-1));
+    if (grabbed || (empty<0 && end)) {
+      head=station===route[0];
     } else {
-      line=lines.slice(0,inventory.lines).findIndex(path => !path.length);
-      if (line<0) {notify('请选择空闲线路，或从已有线路的端点拖动');return;}
+      if (empty<0) reverseStart=station;
+      else line=empty;
       draft=[station];
     }
   } else {
     if (mode==='extreme') return;
-    insert=segmentAt(point,route,selected,Math.max(touchInput ? reach.routeTouch : reach.route,8/view.scale)).index;
-    if (insert===null) return;
+    const limit=Math.max(touchInput ? reach.routeTouch : reach.route,8/view.scale);
+    const hit=event.shiftKey ? {line:selected,...segmentAt(point,route,selected,limit)} : trackAt(point,false,limit);
+    if (!hit || hit.index===null) return;
+    ({index:insert,line}=hit);
+    draft=lines[line].slice();
   }
-  drag={pointer:event.pointerId,point,origin:point,lastStation:station,line,route:draft,draft,head,insert};
+  drag={pointer:event.pointerId,point,origin:point,lastStation:station,line,route:draft,draft,head,insert,reverseStart,splitRing:event.shiftKey};
   canvas.setPointerCapture(event.pointerId);
 };
 
-function extendDraft(target) {
-  if (target<0 || target===drag.lastStation) return;
-  drag.lastStation=target;
+function extendDraft(target,point) {
   const {draft,head,insert,route}=drag;
   if (insert!==null) {
-    if (!route.includes(target)) drag.draft=route.slice(0,insert).concat(target,route.slice(insert));
+    const near=distance(point,drag.origin)*view.scale<=reach.moveThreshold;
+    // 删站是累积的：松手前回到按下处才撤销，移动途中不会还原
+    if (drag.removing && near) Object.assign(drag,{draft:route,removing:false,ids:null});
+    if (target<0) return;
+    if (!route.includes(target)) {
+      if (!drag.removing) drag.draft=route.slice(0,insert).concat(target,route.slice(insert));
+    } else if (!drag.splitRing && !near) {
+      // gap 是被按住线段两端之间的位置：每删一站，缺口就扩到下一个相邻站
+      const ring=looped(route);
+      const ids=drag.ids ?? route.slice(0,routeSize(route)), n=ids.length;
+      const g=drag.gap ?? insert;
+      const left=ids[ring ? (g-1+n)%n : g-1], right=ids[ring ? g%n : g];
+      const j=ids.indexOf(target);
+      if (j>=0 && (target===left || target===right) && n>(ring ? 3 : 2)) {
+        const remaining=ids.filter(id => id!==target);
+        drag.gap=ring ? ((j<g%n ? g%n-1 : g%n)%remaining.length) : (j<g ? g-1 : g);
+        drag.ids=remaining;
+        drag.draft=ring ? [...remaining,remaining[0]] : remaining;
+        drag.removing=true;
+      }
+    }
+    return;
+  }
+  if (target<0 || target===drag.lastStation) return;
+  drag.lastStation=target;
+  if (drag.reverseStart!==null) {
+    if (drag.draft!==drag.route) return;
+    const start=drag.reverseStart;
+    const line=lines.findIndex(route => route.length && !looped(route) && !route.includes(start) &&
+      (route[0]===target || route.at(-1)===target));
+    if (line<0) return;
+    const route=lines[line], head=route[0]===target;
+    Object.assign(drag,{line,head,route,draft:head ? [start,...route] : [...route,start]});
     return;
   }
   if (looped(draft)) return;
@@ -2641,7 +2823,8 @@ canvas.onpointermove = event => {
   if (drag?.pointer !== event.pointerId) return;
   const point=pointerPoint(event), target=stationAt(point,true);
   drag.point=target>=0 ? stations[target] : point;
-  extendDraft(target);
+  extendDraft(target,point);
+  drag.bend=target<0 && !drag.splitRing ? alternateBend(drag,point) : null;
 };
 
 canvas.onpointerup = event => {
@@ -2655,11 +2838,13 @@ canvas.onpointerup = event => {
   }
   if (drag?.pointer !== event.pointerId) return;
   const point=pointerPoint(event), target=stationAt(point,true);
-  extendDraft(target);
-  const {route,draft,line,insert,origin}=drag;
+  extendDraft(target,point);
+  const {route,draft,line,insert,origin,splitRing}=drag;
+  const bend=target<0 && !splitRing ? alternateBend(drag,point) : null;
   drag=null;
+  if (bend) {changeBend(line,bend);return;}
   let updated=draft;
-  if (target<0 && insert!==null && looped(route) && route===draft && distance(point,origin)>25) {
+  if (splitRing && target<0 && insert!==null && looped(route) && route===draft && distance(point,origin)*view.scale>25) {
     updated=route.slice(insert,-1).concat(route.slice(0,insert));
   }
   if (updated===route) return;
@@ -2742,11 +2927,15 @@ $('creativeEdit').onclick=() => {
   notify(enabled ? '点击车站进行编辑，点击空地添加车站' : '返回线路编辑');
 };
 $('remove').onclick=() => setRoute(selected,[]);
+function setToolbarExpanded(expanded) {
+  const button=$('toolbarToggle'), toolbar=$('toolbar');
+  if (!expanded && toolbar.contains(document.activeElement)) button.focus();
+  button.setAttribute('aria-expanded',String(expanded));
+  toolbar.inert=!expanded;
+  if (!expanded) {focusedLine=null;updateHUD();}
+}
 $('toolbarToggle').onclick=event => {
-  const button=event.currentTarget, expanded=button.getAttribute('aria-expanded')==='true';
-  button.setAttribute('aria-expanded',String(!expanded));
-  $('toolbar').inert=expanded;
-  if (expanded) {focusedLine=null;updateHUD();}
+  setToolbarExpanded(event.currentTarget.getAttribute('aria-expanded')!=='true');
 };
 $('menu').onclick=showPauseMenu;
 $('screen').oncancel=event => event.preventDefault();
@@ -2761,6 +2950,12 @@ window.addEventListener('keydown',event => {
     return;
   }
   if ($('screen').open || event.ctrlKey || event.altKey || event.metaKey) return;
+  if (event.key==='ArrowUp' || event.key==='ArrowDown') {
+    if (phase!=='play' || lesson?.stage===0) return;
+    setToolbarExpanded(event.key==='ArrowUp');
+    event.preventDefault();
+    return;
+  }
   if (event.code==='Space' && !(event.target instanceof HTMLButtonElement)) {
     event.preventDefault();
     setClockStage(paused ? speed : 0);

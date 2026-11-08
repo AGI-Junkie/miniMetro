@@ -15,16 +15,17 @@ canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: 
 button { padding: 0; border: 0; background: none; color: inherit; cursor: pointer; font: inherit }
 button:disabled { cursor: default }
 button:focus-visible { outline: 2px solid #21688a; outline-offset: 4px }
-header { position: absolute; right: 20px; top: 16px }
+header { position: absolute; right: 18px; top: 10px }
 .stats { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700 }
 .stats > svg { width: 20px; height: 20px; fill: currentColor; margin-right: 5px }
 #day { white-space: nowrap }
 #clockControls { position: relative }
-#clock { display: block; position: relative; width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--ink); background: repeating-conic-gradient(from -1deg,var(--ink) 0 2deg,transparent 2deg 30deg) }
+#clock { display: block; position: relative; width: 36px; height: 36px; border-radius: 50%; border: 3px solid var(--ink); background: repeating-conic-gradient(from -1deg,var(--ink) 0 2deg,transparent 2deg 30deg) }
 #clock::before { content: ''; position: absolute; inset: 3px; border-radius: 50%; background: var(--paper) }
 #clock::after { content: ''; position: absolute; left: calc(50% - 1px); top: 4px; width: 2px; height: calc(50% - 4px); transform-origin: center bottom; transform: rotate(var(--clock-angle,0deg)); background: var(--ink) }
-#time { position: absolute; top: 36px; right: 0; display: flex; gap: 6px; z-index: 1 }
-#time button { background: var(--ink); color: white; padding: 6px 8px; min-width: 32px }
+#time { position: absolute; top: 100%; right: 0; display: grid; justify-items: center; z-index: 1 }
+#time button { color:var(--ink); width:36px; height:28px; white-space:nowrap }
+#time button[aria-pressed=true] { opacity:.48 }
 footer { position: absolute; bottom: 15px; left: 0; right: 0; pointer-events: none; text-align: center }
 #hint { display: inline-block; margin: 0 0 7px; padding: 2px 6px; font-size: 12px; color: var(--muted); background: color-mix(in srgb,var(--paper) 86%,transparent) }
 .toolbar,#vehicles,nav { display: flex; align-items: center; justify-content: center; gap: clamp(6px,1vw,13px) }
@@ -123,7 +124,6 @@ dialog[data-kind=upgrade] #choices button:disabled { opacity:.44 }
 dialog[data-kind=pause] #kicker:empty { display:none }
 dialog[data-kind=pause] #choices { flex-direction:column; align-items:start; gap:6px }
 :root.night { color-scheme:dark; --paper:#170e16; --ink:#f0e8e3; --muted:#cdc2bc; --blue:#326985 }
-.night #time button { color:var(--paper) }
 .night #hint { background:color-mix(in srgb,var(--paper) 86%,transparent) }
 .night .asset { color:#f0e8e3; background:#514651 }
 .night .asset:disabled,.night #crossings { color:#261f26; background:#8c8684 }
