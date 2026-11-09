@@ -63,21 +63,19 @@ h2 { margin: 3px 0; font-size: clamp(26px,5vw,51px); line-height: 1.1; letter-sp
 
 dialog[data-kind=cities] { width: 100vw; height: 100dvh; max-width: none; max-height: none }
 dialog[data-kind=cities]::backdrop { background: var(--paper) }
-dialog[data-kind=cities] #panel { height: 100%; display: grid; align-content: center; justify-items: center; padding: 20px 0 }
-dialog[data-kind=cities] #choices { position: absolute; bottom: 28px; right: 28px; flex-direction: column; align-items: end; gap: 7px }
-#cityStrip { width: 100%; position: relative; display: flex; justify-content: center; gap: clamp(8px,3vw,42px) }
-#cityStrip::before { content: ''; position: absolute; top: 28px; width: 100%; height: 8px; background: #d9c962 }
-.city-option { width: min(22vw,240px); min-width:0; min-height:124px; padding:7px; text-align:left; position:relative; opacity:.48; background:var(--paper); border-top:4px solid var(--accent) }
+dialog[data-kind=cities] #panel { height:100%; display:grid; align-content:safe center; justify-items:center; overflow:auto; padding:20px 14px }
+dialog[data-kind=cities] #choices { justify-content:center; gap:7px; margin-top:18px }
+#cityStrip { width:min(100%,780px); display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:clamp(8px,2vw,24px) }
+.city-option { min-width:0; padding:7px; text-align:left; position:relative; opacity:.48; background:var(--paper); border-top:4px solid var(--accent) }
 .city-option[aria-pressed=true] { opacity: 1; background: #e9e9df; transform: scale(1.06); z-index: 1 }
 .city-option span { display: block; font-weight: 700; margin-bottom: 4px }
-.city-option svg { display: block; width: 100%; aspect-ratio: 1.55 }
+.city-option svg { display:block; width:100%; height:auto; max-height:100px; aspect-ratio:1.55 }
 @media(max-width:650px) {
   header { right: 11px; top: 10px }
   footer { bottom: 36px }
   .corner { bottom: 5px }
   .asset { width: 23px; height: 23px; flex-basis: 23px }
   .asset svg { width: 17px; height: 17px }
-  dialog[data-kind=cities] #choices { right: 12px; bottom: 14px }
 }
 @media(prefers-reduced-motion:reduce) { dialog #panel { animation: none } }
 .asset { touch-action: none }
@@ -132,7 +130,6 @@ dialog[data-kind=pause] #choices { flex-direction:column; align-items:start; gap
 .night dialog::backdrop { background:#170e1685 }
 .night dialog[data-kind=cities]::backdrop { background:var(--paper) }
 .night .city-option[aria-pressed=true] { background:#312831 }
-.night #cityStrip::before { background:#8a7845 }
 .night dialog[data-kind=statistics]::backdrop { background:#170e16da }
 .night #metrics { border-color:#a69b96 }
 .night #metrics button[aria-pressed=true]::after,.night #chart { filter:brightness(1.35) }

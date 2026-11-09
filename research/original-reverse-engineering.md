@@ -307,3 +307,7 @@ wiki 地图表（通过 Fandom 的 api.php?action=parse 读取，页面本身返
 ## 柏林
 
 [开发者 Beta 25 公告](https://store.steampowered.com/news/posts/?appids=287980&enddate=1438310162&feed=steam_community_announcements)确认柏林每次隧道升级只给一条通道。试玩包的成就配置给出柏林极限挑战为每线最多一台机车并送达 1,000 人。[地图资料](https://mini-metro.fandom.com/wiki/Berlin)记录开局两条通道，以及伦敦、巴黎、纽约任一局送达 200 人后解锁。施普雷河轮廓、站位和昼夜色均为网页近似值。
+
+## 京都新干线
+
+伦敦试玩包的 `asset-74-default.json` 给出普通机车速度、加速度和制动为 130、55、110，新干线为 550、110、300。两种车型共用 6 人每节的容量。网页版将这套车型参数用于原创京都地图的运行和乘客到达时间预估。开局提供一台，周奖励可选，车头外观和城市配置为原创设定。旧存档保留城市内部键。

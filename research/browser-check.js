@@ -954,5 +954,50 @@ async page => {
   await page.getByRole('button',{name:'过河通道 ×1',exact:true}).click();
   await page.getByRole('dialog').waitFor({state:'hidden'});
   check(await page.evaluate(() => inventory.crossings===3),'Berlin tunnel reward grants exactly one crossing');
+  await page.setViewportSize({width:360,height:640});
+  await page.evaluate(() => {menuMode='normal';showMenu();});
+  check(await page.locator('#cityStrip button').count()===6,'all six city cards appear on a narrow screen');
+  await page.getByRole('button',{name:'鹿特丹',exact:true}).click();
+  await page.getByRole('button',{name:'开始游戏'}).click();
+  check(await page.evaluate(() => cityKey==='Tideport' && inventory.crossings===2 &&
+    waterways(cities[cityKey]).length===2 && crossings([0,1,2])===2 &&
+    setRoute(0,[0,1,2]) && usedCrossings()===2),'Tideport opens directly and the opening network crosses both channels');
+  await page.evaluate(() => showMenu());
+  await page.getByRole('button',{name:'京都',exact:true}).click();
+  await page.getByRole('button',{name:'开始游戏'}).click();
+  check(await page.evaluate(() => cityKey==='Redvale' && stations.every(station => station.capacity===5) &&
+    stationGap===21 && waterways(cities[cityKey]).length===1),'Redvale opens directly with five-passenger stations and faster growth');
+  await page.evaluate(() => {
+    paused=true;inventory.crossings=12;
+    stations[0].x=230;stations[0].y=180;stations[1].x=640;stations[1].y=180;
+    setRoute(0,[0,1]);
+  });
+  const express=await page.getByRole('button',{name:'增加新干线'}).boundingBox();
+  await dragThrough([{x:express.x+express.width/2,y:express.y+express.height/2},await world([500,180])]);
+  check(await page.evaluate(() => {
+    const [local,express]=trains, cache=new Map();
+    if (express?.type!=='shinkansen' || express.direction!==-1 || inventory.shinkansen!==0) return false;
+    const localTravel=forecast(local,null,cache).events[0].travel;
+    const expressTravel=forecast(express,null,cache).events[0].travel;
+    const track=[{x:0,y:0},{x:800,y:0}];
+    advanceTrain(local,track,.1);
+    advanceTrain(express,track,.1);
+    if (expressTravel>=localTravel || express.velocity<=local.velocity) return false;
+    setRoute(0,[]);
+    for (let i=0;i<600 && retiring.length;i++) moveTrains(.05);
+    return inventory.shinkansen===1 && inventory.trains===3;
+  }),'Kyoto Shinkansen drags onto track, travels and forecasts faster, and returns to its own stock');
+  await page.evaluate(() => upgrade());
+  await page.getByRole('button',{name:'机车',exact:true}).click();
+  await page.getByRole('button',{name:'新干线',exact:true}).click();
+  await page.getByRole('dialog').waitFor({state:'hidden'});
+  check(await page.evaluate(() => inventory.shinkansen===2),'Kyoto offers a Shinkansen in weekly upgrades');
+  await page.evaluate(() => {setRoute(0,[0,1]);addTrain(0,null,'shinkansen');});
+  await page.keyboard.press('Escape');
+  await page.getByRole('button',{name:'城市选择',exact:true}).click();
+  await page.reload();
+  await page.getByRole('button',{name:'继续运营'}).click();
+  check(await page.evaluate(() => cityKey==='Redvale' && trains.some(train => train.type==='shinkansen') &&
+    inventory.shinkansen===1),'Kyoto save restores both the deployed Shinkansen and remaining stock');
   check(errors.length===0,errors.join(', '));
 }

@@ -1,5 +1,16 @@
 'use strict';
 
+// 旧版微信/系统内核缺少 Array.at 与 roundRect，缺失时补上，否则脚本中途报错、地图空白。
+for (const T of [Array,String,Int8Array,Uint8Array,Uint8ClampedArray,Float32Array,Float64Array]) {
+  if (!T.prototype.at) Object.defineProperty(T.prototype,'at',{configurable:true,writable:true,value(i) {i=Math.trunc(i)||0;return this[i<0 ? this.length+i : i];}});
+}
+if (window.CanvasRenderingContext2D && !CanvasRenderingContext2D.prototype.roundRect) {
+  CanvasRenderingContext2D.prototype.roundRect=function(x,y,w,h,r=0) {
+    r=Math.min([].concat(r)[0],w/2,h/2);
+    this.moveTo(x+r,y);this.arcTo(x+w,y,x+w,y+h,r);this.arcTo(x+w,y+h,x,y+h,r);this.arcTo(x,y+h,x,y,r);this.arcTo(x,y,x+w,y,r);this.closePath();
+  };
+}
+
 const $ = id => document.getElementById(id);
 const canvas = $('map');
 let ctx = canvas.getContext('2d');
@@ -32,6 +43,20 @@ const themes = {
     night: {paper:'#303030',water:'#547486',bank:'#476776',station:'#2e2e2e',ink:'#dcdcdc',
       colors:['#92be57','#f06555','#46a78e','#edbf46','#be8a67','#a989cb','#57a5d0']},
     bankWidth: 3.72, stationWidth: 3.72,
+  },
+  Tideport: {
+    day: {paper:'#eef7f3',water:'#b5dfdf',bank:'#65a7ae',station:'#fbfffc',ink:'#284447',
+      colors:['#15877f','#e36d52','#645eb3','#d2a22c','#417cba','#b24a83','#658a3e']},
+    night: {paper:'#202e35',water:'#365a66',bank:'#4f7780',station:'#263940',ink:'#e1f4f0',
+      colors:['#4dc8b9','#ff937a','#a99aef','#f6cb63','#7db7f4','#ed92c6','#a0c36b']},
+    bankWidth:3.72, stationWidth:3.72,
+  },
+  Redvale: {
+    day: {paper:'#fff4e5',water:'#bad4e3',bank:'#759cb7',station:'#fffaf0',ink:'#52382e',
+      colors:['#bb4a37','#4c7cad','#7b8c3c','#d38724','#7a5896','#a24f69','#2f9387']},
+    night: {paper:'#352c29',water:'#435769',bank:'#658196',station:'#423430',ink:'#f5e2d6',
+      colors:['#ed7861','#82b5e9','#adbd61','#f1b057','#ba95d5','#e38ba5','#60c7b7']},
+    bankWidth:3.72, stationWidth:3.72,
   },
 };
 const londonMap = {
@@ -74,6 +99,14 @@ const cities = {
   Berlin: {name:'柏林', startingCrossings:2, crossingReward:1,
     river:[[0,260],[165,260],[229,196],[324,196],[375,247],[443,247],[489,293],[595,293],[654,352],[722,352],[791,421],[960,421]],
     start:[[315,145],[480,355],[660,245]]},
+  Tideport: {name:'鹿特丹', description:'原创地图 · 两条潮汐水道，开局只有两条过河通道', startingCrossings:2,
+    river:[[0,183],[210,183],[320,220],[500,220],[640,178],[960,178]],
+    eastRiver:[[0,402],[200,402],[335,365],[530,365],[690,415],[960,415]],
+    start:[[310,145],[480,293],[640,452]]},
+  Redvale: {name:'京都', description:'原创地图 · 普通站容量为 5，可投放高速新干线', shinkansen:true,
+    stationCapacity:5, stationGap:21, stationSpacingScale:.82,
+    river:[[0,312],[174,312],[249,238],[334,238],[407,309],[523,309],[610,229],[708,229],[787,305],[960,305]],
+    start:[[320,160],[485,390],[650,158]]},
 };
 const days = ['一','二','三','四','五','六','日'];
 const types = ['圆形','三角形','方形','菱形','星形','五边形','十字形'];
@@ -111,6 +144,8 @@ const passengerPace = 5.3;
 let lastTouch = 0;
 const stationGrid = 50*unit, stationPreview = 20, stationPreviewRadius = 36*unit/2*.3, maxStations = 128;
 const trainTuning = {speed:130*unit, acceleration:55*unit, braking:110*unit};
+const shinkansenTuning = {speed:550*unit, acceleration:110*unit, braking:300*unit};
+const tuningFor = train => train.type==='shinkansen' ? shinkansenTuning : trainTuning;
 const scenicMilestones=[4,8,13,19,24,27,33,36,39,43,47,52,56,60,65,75,90];
 let recentTrips, scenicMilestone, nextEfficiency;
 const overloadLimit = 45;
@@ -127,6 +162,10 @@ const extremeGoals={
     count:() => lines.filter(route => route.some(id => stations[id].type===2)).length},
   Berlin:{score:1000,limit:1,label:'每条线路至多使用 1 台机车，并送达 1,000 人',
     count:() => Math.max(...lines.map((_,line) => trains.filter(train => train.line===line).length))},
+  Tideport:{score:750,limit:2,label:'用至多 2 条通道送达 750 人',
+    count:() => lines.reduce((total,route) => total+crossings(route),0)},
+  Redvale:{score:850,limit:3,label:'用至多 3 条线路送达 850 人',
+    count:() => lines.filter(route => route.length).length},
 };
 const unlockedExtreme=new Set();
 const berlinSources=['London','Paris','NewYork'];
@@ -198,6 +237,7 @@ function reset(key) {
   focusedLine = null;
   setToolbarExpanded(true);
   inventory = {lines:3, trains:3, cars:0, crossings:cities[key].startingCrossings ?? (key==='Paris' ? 4 : 3), interchanges:0};
+  inventory.shinkansen=cities[key].shinkansen ? 1 : 0;
   if (mode==='creative') enableCreative();
   time = score = selected = 0;
   recentTrips=[];
@@ -447,7 +487,7 @@ function unload(train,id) {
 }
 
 function returnStock(train) {
-  inventory.trains++;
+  inventory[train.type==='shinkansen' ? 'shinkansen' : 'trains']++;
   inventory.cars+=train.cars;
 }
 
@@ -551,6 +591,7 @@ function trainLimit() {return mode==='creative' ? 8 : 11-colors.length;}
 
 function enableCreative() {
   Object.assign(inventory,{lines:colors.length,trains:Infinity,cars:Infinity,crossings:Infinity,interchanges:Infinity});
+  if (cities[cityKey].shinkansen) inventory.shinkansen=Infinity;
   stations.forEach(station => {station.demand ??=1;});
 }
 
@@ -640,16 +681,17 @@ function departureFromDrop(line,{index,progress}) {
   return {stop,direction:forward ? 1 : -1,progress:0,velocity:0,dwell:dwellAt(route[stop])};
 }
 
-function addTrain(line,placement=null) {
-  if (!inventory.trains || !lines[line].length) return;
+function addTrain(line,placement=null,type='train') {
+  const stock=type==='shinkansen' ? 'shinkansen' : 'trains';
+  if (!inventory[stock] || !lines[line].length) return;
   const existing = trains.filter(t => t.line === line).length;
   if (existing >= trainLimit()) return;
   const stop=existing%2 ? routeSize(lines[line])-1 : 0;
   const departure=placement ? departureFromDrop(line,placement) : {
     stop,direction:stop===0 ? 1 : -1,progress:0,velocity:0,dwell:.6+Math.floor(existing/2)*2,
   };
-  trains.push({line,...departure,riders:[],cars:0,born:time});
-  inventory.trains--;
+  trains.push({line,type,...departure,riders:[],cars:0,born:time});
+  inventory[stock]--;
   cue('place');
   updateHUD();
 }
@@ -669,8 +711,8 @@ function addCar(line=selected,point=null) {
   updateHUD();
 }
 
-function travelSeconds(length,velocity=0) {
-  const {acceleration,braking,speed:limit}=trainTuning;
+function travelSeconds(length,velocity=0,tuning=trainTuning) {
+  const {acceleration,braking,speed:limit}=tuning;
   const initial=Math.min(velocity,limit,Math.sqrt(2*braking*length));
   const peak=Math.min(limit,Math.sqrt((2*length+initial**2/acceleration)/(1/acceleration+1/braking)));
   const cruise=Math.max(0,length-(peak**2-initial**2)/(2*acceleration)-peak**2/(2*braking));
@@ -678,6 +720,7 @@ function travelSeconds(length,velocity=0) {
 }
 
 function forecast(train,departing,legTimes) {
+  const tuning=tuningFor(train);
   const route=lines[train.line], ring=looped(route);
   const stationCount=routeSize(route);
   let {stop,direction}=train;
@@ -689,7 +732,7 @@ function forecast(train,departing,legTimes) {
   let firstDeparture=Math.max(0,train.dwell,spacing?.wait ?? 0);
   if (train!==departing && train.dwell<=0 && !spacing?.hold) {
     const track=lineTrack(route[stop],route[stepIndex(route,stop,direction)],train.line);
-    firstDeparture=travelSeconds(Math.max(0,trackLength(track)-train.progress),train.velocity)+dwellAt(route[stepIndex(route,stop,direction)]);
+    firstDeparture=travelSeconds(Math.max(0,trackLength(track)-train.progress),train.velocity,tuning)+dwellAt(route[stepIndex(route,stop,direction)]);
     step();
   }
   const events=[];
@@ -698,8 +741,8 @@ function forecast(train,departing,legTimes) {
   for (let i=0;i<count;i++) {
     const from=route[stop];
     step();
-    const to=route[stop], key=train.line+'/'+edgeKey(from,to);
-    if (!legTimes.has(key)) legTimes.set(key,travelSeconds(trackLength(lineTrack(from,to,train.line))));
+    const to=route[stop], key=train.line+'/'+tuning.speed+'/'+edgeKey(from,to);
+    if (!legTimes.has(key)) legTimes.set(key,travelSeconds(trackLength(lineTrack(from,to,train.line)),0,tuning));
     const travel=legTimes.get(key);
     events.push({station:from,departure:firstDeparture+period,travel,reverses:!ring && (stop===0 || stop===stationCount-1)});
     period+=travel+dwellAt(to);
@@ -853,7 +896,7 @@ function needsStationStop(train,route,next,incoming) {
 
 function advanceTrain(train,points,dt,room=Infinity,through=false) {
   const remaining=trackLength(points)-train.progress;
-  const {speed,acceleration,braking}=trainTuning;
+  const {speed,acceleration,braking}=tuningFor(train);
   const target=through ? speed : Math.min(speed,Math.sqrt(2*braking*Math.max(0,remaining)));
   train.velocity=Math.min(target,train.velocity+acceleration*dt);
   const step=Math.min(room,train.velocity*dt);
@@ -877,7 +920,8 @@ function moveTrains(dt) {
     if (spacing.hold) {train.velocity=0;continue;}
     const next=stepIndex(route,train.stop,train.direction);
     const incoming=lineTrack(route[train.stop],route[next],train.line);
-    const brakingDistance=trainTuning.speed**2/(2*trainTuning.braking)+trainTuning.speed*dt+.8;
+    const {speed,braking}=tuningFor(train);
+    const brakingDistance=speed**2/(2*braking)+speed*dt+.8;
     if (train.approach===undefined && trackLength(incoming)-train.progress<=brakingDistance) {
       train.approach=needsStationStop(train,route,next,incoming);
     }
@@ -905,7 +949,7 @@ function moveTrains(dt) {
       continue;
     }
     trains.push({line:train.line,stop,direction:!looped(route) && stop===route.length-1 ? -1 : 1,
-      cars:train.cars,riders:[],progress:0,velocity:0,dwell:dwellAt(route[stop])});
+      type:train.type,cars:train.cars,riders:[],progress:0,velocity:0,dwell:dwellAt(route[stop])});
   }
   lines.forEach((_,index) => dispatchIfEmpty(index));
   updateHUD();
@@ -1196,6 +1240,10 @@ function upgrade() {
     target:$('lines').children[inventory.lines],apply:() => {inventory.lines++;},
   });
   const offers=pickOffers(options);
+  if (cities[cityKey].shinkansen) offers[1]={
+    label:'新干线',description:'高速列车，适合站距较长的线路。每节仍可载 6 人。',
+    symbol:'express',target:$('shinkansen'),apply:() => {inventory.shinkansen++;},
+  };
   const decorate=(entries) => {
     [...$('choices').children].forEach((button,i) => {
       const offer=entries[i];
@@ -1788,7 +1836,11 @@ function updateHUD() {
   $('speed').setAttribute('aria-pressed',String(!paused && speed===2));
   $('creativeEdit').hidden=mode!=='creative';
   $('trainCount').textContent = mode==='creative' ? '∞' : inventory.trains;
-  $('train').disabled = !inventory.trains || !lines.some((route,line) => route.length && trains.filter(t => t.line===line).length < trainLimit());
+  const hasRoom=lines.some((route,line) => route.length && trains.filter(t => t.line===line).length < trainLimit());
+  $('train').disabled=!inventory.trains || !hasRoom;
+  $('shinkansen').hidden=!cities[cityKey].shinkansen;
+  $('shinkansen').disabled=!inventory.shinkansen || !hasRoom;
+  $('shinkansenCount').textContent=mode==='creative' ? '∞' : inventory.shinkansen;
   $('carCount').textContent = mode==='creative' ? '∞' : inventory.cars;
   $('interchangeCount').textContent = mode==='creative' ? '∞' : inventory.interchanges;
   $('interchange').disabled = !inventory.interchanges;
@@ -1886,6 +1938,7 @@ function resumeGame(game) {
     for (const frame of [game,...replayFrames]) {
       frame.lines.forEach((route,index) => {route.bends=frame.bends?.[index] ?? undefined;});
     }
+    inventory.shinkansen ??= cities[cityKey].shinkansen ? 1 : 0;
     if (mode==='creative') enableCreative();
     if (lesson) document.documentElement.dataset.lesson=String(lesson.stage);
     rebuildTracks();
@@ -1956,7 +2009,7 @@ function showMenu() {
   options[tutorialDone ? 'push' : 'unshift'](['伦敦入门教程',startTutorial]);
   const savedGame=parkedGame ? null : readSavedGame();
   if (parkedGame || savedGame) options.push(['↖ 继续运营',() => resumeGame(savedGame)]);
-  const label=menuCity==='NewYork' ? 'New York' : menuCity;
+  const label=current.description ?? (menuCity==='NewYork' ? 'New York' : menuCity);
   const description=locked ? '在伦敦、巴黎或纽约的一局中送达 200 人，解锁柏林' :
     menuMode==='creative' ? '创意模式 · 手动设计车站与客流' : menuMode==='endless' ? '无尽模式 · 提高每日客运量以获得资源' : menuMode==='extreme' && !extremeUnlocked(menuCity) ? '解锁条件：'+extremeGoals[menuCity].label : label;
   showPanel(current.name,description,options,'Mini Metro','cities');
@@ -2237,7 +2290,17 @@ function drawTrain(train) {
     ctx.scale(grow,grow);
     ctx.globalAlpha=train.move && (train.move.car===0 || train.move.car===i) ? .45 : 1;
     ctx.fillStyle=colors[train.line];
-    ctx.fillRect(-railcar.length/2,-railcar.width/2,railcar.length,railcar.width);
+    if (i===0 && train.type==='shinkansen') {
+      const end=railcar.length/2, side=railcar.width/2;
+      ctx.beginPath();
+      ctx.moveTo(-end,-side);
+      ctx.lineTo(end*.35,-side);
+      ctx.quadraticCurveTo(end,-side,end,0);
+      ctx.quadraticCurveTo(end,side,end*.35,side);
+      ctx.lineTo(-end,side);
+      ctx.closePath();
+      ctx.fill();
+    } else ctx.fillRect(-railcar.length/2,-railcar.width/2,railcar.length,railcar.width);
     ctx.fillStyle=paper;
     const tint=mixColor(colors[train.line],'#ffffff',.6);
     train.riders.slice(i*6,i*6+6).forEach((rider,j) => shape(rider.type,(Math.floor(j/2)-1)*railcar.gap,(j%2-.5)*railcar.gap,peepRadius*railcar.peep,tint));
@@ -2701,7 +2764,7 @@ canvas.onpointermove = event => {
     // 列车拖动时吸附到最近的节点，车头朝向线路另一端；没有靠近的线路才跟着鼠标
     vehicleDrag.snap=track ? {line:track.line,...departureFromDrop(track.line,track)} : null;
     if (!vehicleDrag.moved || vehicleDrag.snap) $('assetGhost').hidden=true;
-    else showAssetGhost(vehicleDrag.car ? '#carriage' : '#locomotive',event);
+    else showAssetGhost(vehicleDrag.car ? '#carriage' : vehicleDrag.train.type==='shinkansen' ? '#express' : '#locomotive',event);
     return;
   }
   if (drag?.pointer !== event.pointerId) return;
@@ -2763,13 +2826,13 @@ function assignAsset(id,point) {
   const placement=trackAt(point,id==='car');
   if (!placement) return;
   selected=placement.line;
-  if (id==='train') addTrain(selected,placement);
+  if (id==='train' || id==='shinkansen') addTrain(selected,placement,id);
   else addCar(selected,point);
   updateLines();
   updateHUD();
 }
 
-for (const id of ['train','car','interchange']) {
+for (const id of ['train','shinkansen','car','interchange']) {
   const button=$(id);
   button.onpointerdown=event => {
     if (event.button!==0) return;
@@ -2796,7 +2859,7 @@ for (const id of ['train','car','interchange']) {
   };
   button.onclick=event => {
     if (event.detail && button.dataset.dragged==='true') return;
-    if (id==='train') addTrain(selected);
+    if (id==='train' || id==='shinkansen') addTrain(selected,null,id);
     else if (id==='car') addCar();
     else {
       const active=button.getAttribute('aria-pressed')==='true';
