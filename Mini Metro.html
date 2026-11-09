@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:,">
-<title>Mini Metro · 网页复刻</title>
+<title>模拟地铁</title>
 <style>
 :root {
   color-scheme: light;
@@ -75,7 +75,7 @@ dialog[data-kind=cities] #panel { height: 100%; display: grid; align-content: ce
 dialog[data-kind=cities] #choices { position: absolute; bottom: 28px; right: 28px; flex-direction: column; align-items: end; gap: 7px }
 #cityStrip { width: 100%; position: relative; display: flex; justify-content: center; gap: clamp(8px,3vw,42px) }
 #cityStrip::before { content: ''; position: absolute; top: 28px; width: 100%; height: 8px; background: #d9c962 }
-.city-option { width: min(29vw,240px); min-height: 124px; padding: 7px; text-align: left; position: relative; opacity: .48; background: var(--paper); border-top: 4px solid var(--accent) }
+.city-option { width: min(22vw,240px); min-width:0; min-height:124px; padding:7px; text-align:left; position:relative; opacity:.48; background:var(--paper); border-top:4px solid var(--accent) }
 .city-option[aria-pressed=true] { opacity: 1; background: #e9e9df; transform: scale(1.06); z-index: 1 }
 .city-option span { display: block; font-weight: 700; margin-bottom: 4px }
 .city-option svg { display: block; width: 100%; aspect-ratio: 1.55 }
@@ -281,6 +281,13 @@ const themes = {
     night: {"paper": "#2e3032", "water": "#415b74", "bank": "#2b2c2c", "station": "#222424", "ink": "#d9dcdf", "colors": ["#ee352e", "#00933c", "#b933ad", "#2850ad", "#ff6319", "#fccc0a", "#996633"]},
     bankWidth: 1.24, stationWidth: 2.48,
   },
+  Berlin: {
+    day: {paper:'#f4f2ec',water:'#c4e2ed',bank:'#82bdd1',station:'#fafafa',ink:'#443333',
+      colors:['#6e9d3b','#da342c','#187f61','#e9b637','#855139','#775294','#2684ad']},
+    night: {paper:'#303030',water:'#547486',bank:'#476776',station:'#2e2e2e',ink:'#dcdcdc',
+      colors:['#92be57','#f06555','#46a78e','#edbf46','#be8a67','#a989cb','#57a5d0']},
+    bankWidth: 3.72, stationWidth: 3.72,
+  },
 };
 const londonMap = {
   // 河道中线（宽 40）与 8 块城市区域，均为原版单位，y 轴朝上。每块区域：scale 为车站密度系数，w 为圆形、三角形、方形、特殊站
@@ -319,6 +326,9 @@ const cities = {
     river:[[0,217],[149,215],[278,265],[438,326],[565,326],[727,243],[960,260]], start:[[340,227],[477,372],[614,249]]},
   NewYork: {name:'纽约', vertical:true, river:[[0,485],[100,456],[200,419],[300,387],[400,352],[500,310],[570,279]],
     eastRiver:[[0,668],[85,630],[175,592],[255,574],[325,601],[415,524],[485,461],[570,395]], start:[[352,228],[495,329],[655,235]]},
+  Berlin: {name:'柏林', startingCrossings:2, crossingReward:1,
+    river:[[0,260],[165,260],[229,196],[324,196],[375,247],[443,247],[489,293],[595,293],[654,352],[722,352],[791,421],[960,421]],
+    start:[[315,145],[480,355],[660,245]]},
 };
 const days = ['一','二','三','四','五','六','日'];
 const types = ['圆形','三角形','方形','菱形','星形','五边形','十字形'];
@@ -370,8 +380,19 @@ const extremeGoals={
     count:() => lines.filter(route => route.length).length},
   NewYork:{score:1600,limit:2,label:'让方形站最多出现在 2 条线路上，并送达 1,600 人',
     count:() => lines.filter(route => route.some(id => stations[id].type===2)).length},
+  Berlin:{score:1000,limit:1,label:'每条线路至多使用 1 台机车，并送达 1,000 人',
+    count:() => Math.max(...lines.map((_,line) => trains.filter(train => train.line===line).length))},
 };
 const unlockedExtreme=new Set();
+const berlinSources=['London','Paris','NewYork'];
+let berlinEarned=false;
+function berlinUnlocked() {
+  if (berlinEarned) return true;
+  try {
+    return localStorage.getItem('metro-city-berlin')==='unlocked' ||
+      berlinSources.some(city => ['normal','extreme'].some(mode => Number(localStorage.getItem('metro-best-'+city+'-'+mode))>=200));
+  } catch {return false;}
+}
 let eligibleExtreme=true, upcomingStation;
 let collapseStation = null, newBest = false;
 let replayFrames=[], replay=null;
@@ -431,7 +452,7 @@ function reset(key) {
   highlightUntil = 0;
   focusedLine = null;
   setToolbarExpanded(true);
-  inventory = {lines:3, trains:3, cars:0, crossings:3, interchanges:0}; // 开局 3 个过河通道（试玩构建里前三次跨河都被接受）
+  inventory = {lines:3, trains:3, cars:0, crossings:cities[key].startingCrossings ?? (key==='Paris' ? 4 : 3), interchanges:0};
   if (mode==='creative') enableCreative();
   time = score = selected = 0;
   recentTrips=[];
@@ -651,6 +672,10 @@ document.addEventListener('click',event => {if (event.target.closest?.('button')
 
 function deliver(rider) {
   score++;
+  if (score===200 && (mode==='normal' || mode==='extreme') && berlinSources.includes(cityKey)) {
+    berlinEarned=true;
+    try {localStorage.setItem('metro-city-berlin','unlocked');} catch {}
+  }
   recentTrips.push(time);
   daily.trips++;
   daily.distance+=rider.distance;
@@ -1397,23 +1422,35 @@ async function animateReward(icon,target) {
   }
 }
 
+// 官方 wiki：纽约给出过河通道的概率更低（具体数值未知，这里取一半权重）
+function pickOffers(options,random=Math.random) {
+  const weight=option => cityKey==='NewYork' && option.symbol==='tunnel' ? .5 : 1;
+  const pool=options.slice(), offers=[];
+  for (let i=0;i<2;i++) {
+    let roll=random()*pool.reduce((sum,option) => sum+weight(option),0), pick=0;
+    while (pick<pool.length-1 && roll>=weight(pool[pick])) roll-=weight(pool[pick++]);
+    offers.push(pool.splice(pick,1)[0]);
+  }
+  return offers;
+}
+
 function upgrade() {
   week++;
   cue('upgrade');
   for (const station of stations) {
     if (station.pressure>=overloadLimit-weekGrace) station.expiryLimit=station.pressure+weekGrace;
   }
+  const crossingReward=cities[cityKey].crossingReward ?? 2;
   const options = [
     {label:'增配车厢',description:'加挂一节车厢，多载 6 位乘客。',symbol:'carriage',target:$('car'),apply:() => {inventory.cars++;}},
-    {label:'过河通道 ×2',description:'增建两条可穿越水域的轨道。',symbol:'tunnel',count:2,target:$('crossings'),apply:() => {inventory.crossings+=2;}},
+    {label:'过河通道 ×'+crossingReward,description:'增加 '+crossingReward+' 条过河通道。',symbol:'tunnel',count:crossingReward,target:$('crossings'),apply:() => {inventory.crossings+=crossingReward;}},
     {label:'换乘站',description:'将一座车站的容量从 6 提升到 18。',symbol:'station',target:$('interchange'),apply:() => {inventory.interchanges++;}},
   ];
   if (inventory.lines<colors.length) options.push({
     label:'新增线路',description:'解锁一种颜色，开通一条新线路。',color:colors[inventory.lines],
     target:$('lines').children[inventory.lines],apply:() => {inventory.lines++;},
   });
-  const offers=[];
-  for (let i=0;i<2;i++) offers.push(options.splice(Math.floor(Math.random()*options.length),1)[0]);
+  const offers=pickOffers(options);
   const decorate=(entries) => {
     [...$('choices').children].forEach((button,i) => {
       const offer=entries[i];
@@ -2164,8 +2201,9 @@ function showPauseMenu() {
 function showMenu() {
   const keys = Object.keys(cities);
   const current = cities[menuCity];
+  const locked=menuCity==='Berlin' && !berlinUnlocked();
   const options = [
-    ['➜ 开始游戏', () => start(menuCity,menuMode),menuMode==='extreme' && !extremeUnlocked(menuCity)],
+    ['➜ 开始游戏', () => start(menuCity,menuMode),locked || (menuMode==='extreme' && !extremeUnlocked(menuCity))],
     ['↓ 模式 · '+modeNames[menuMode], () => {menuMode=modes[(modes.indexOf(menuMode)+1)%modes.length];showMenu();$('choices').querySelector('[data-mode-toggle]').focus();}],
   ];
   let tutorialDone=false;
@@ -2174,7 +2212,8 @@ function showMenu() {
   const savedGame=parkedGame ? null : readSavedGame();
   if (parkedGame || savedGame) options.push(['↖ 继续运营',() => resumeGame(savedGame)]);
   const label=menuCity==='NewYork' ? 'New York' : menuCity;
-  const description=menuMode==='creative' ? '创意模式 · 手动设计车站与客流' : menuMode==='endless' ? '无尽模式 · 提高每日客运量以获得资源' : menuMode==='extreme' && !extremeUnlocked(menuCity) ? '解锁条件：'+extremeGoals[menuCity].label : label;
+  const description=locked ? '在伦敦、巴黎或纽约的一局中送达 200 人，解锁柏林' :
+    menuMode==='creative' ? '创意模式 · 手动设计车站与客流' : menuMode==='endless' ? '无尽模式 · 提高每日客运量以获得资源' : menuMode==='extreme' && !extremeUnlocked(menuCity) ? '解锁条件：'+extremeGoals[menuCity].label : label;
   showPanel(current.name,description,options,'Mini Metro','cities');
   if (parkedGame && !parkedSaveWritten) $('description').textContent+=' · 本局仅保留在当前页面';
   [...$('choices').children].find(button => button.textContent.startsWith('↓')).dataset.modeToggle='';
@@ -2756,11 +2795,17 @@ function vehicleAt(point,limit=Math.max(touchInput ? reach.carTouch : reach.car,
   return result;
 }
 
-function trackAt(point,needsTrain=false,limit=Math.max(reach.assetDrop,14/view.scale)) {
+// 拖列车的落点：范围放宽到约 46 屏幕像素，并跳过列车已满的其他线路（否则松手会被静默拒绝）
+function trainDropAt(point,train) {
+  return trackAt(point,false,Math.max(reach.assetDrop,46/view.scale),line => line===train.line || trains.filter(t => t.line===line).length<trainLimit());
+}
+
+function trackAt(point,needsTrain=false,limit=Math.max(reach.assetDrop,14/view.scale),accept=null) {
   let best=limit, result=null;
   for (let offset=0;offset<inventory.lines;offset++) {
     const line=(selected+offset)%inventory.lines;
     if (needsTrain && !trains.some(train => train.line===line)) continue;
+    if (accept && !accept(line)) continue;
     const match=segmentAt(point,lines[line],line,best);
     if (match.index!==null) {result={line,...match};best=match.distance;}
   }
@@ -2778,7 +2823,7 @@ function applyVehicleMove(train) {
     train.cars--;
     move.target.cars++;
   } else {
-    const track=segmentAt(move.point,lines[move.line],move.line,Math.max(reach.assetDrop,14/view.scale));
+    const track=segmentAt(move.point,lines[move.line],move.line,Math.max(reach.assetDrop,46/view.scale));
     if (track.index===null || (move.line!==train.line && trains.filter(t => t.line===move.line).length>=trainLimit())) return;
     unload(train,origin);
     Object.assign(train,{line:move.line,...departureFromDrop(move.line,track)});
@@ -2795,7 +2840,7 @@ function scheduleVehicleMove(vehicle,point) {
     if (!target || target===train) return;
     train.move={car,target};
   } else {
-    const track=trackAt(point);
+    const track=trainDropAt(point,train);
     if (!track || (track.line!==train.line && trains.filter(t => t.line===track.line).length>=trainLimit())) return;
     train.move={car,line:track.line,point};
   }
@@ -2907,7 +2952,7 @@ function extendDraft(target,point) {
 canvas.onpointermove = event => {
   if (vehicleDrag?.pointer===event.pointerId) {
     vehicleDrag.moved ||= distance(vehicleDrag.origin,pointerPoint(event))*view.scale>reach.moveThreshold;
-    const point=pointerPoint(event), track=vehicleDrag.moved && !vehicleDrag.car ? trackAt(point) : null;
+    const point=pointerPoint(event), track=vehicleDrag.moved && !vehicleDrag.car ? trainDropAt(point,vehicleDrag.train) : null;
     // 列车拖动时吸附到最近的节点，车头朝向线路另一端；没有靠近的线路才跟着鼠标
     vehicleDrag.snap=track ? {line:track.line,...departureFromDrop(track.line,track)} : null;
     if (!vehicleDrag.moved || vehicleDrag.snap) $('assetGhost').hidden=true;

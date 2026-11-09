@@ -684,8 +684,10 @@ async page => {
     'dragging a ring segment to its adjacent station previews removal');
   const removeAway=await world([400,270]);
   await page.mouse.move(removeAway.x,removeAway.y);
+  check(await page.evaluate(() => drag?.removing),'moving away keeps the cumulative station removal preview');
+  await page.mouse.move(removeFrom.x,removeFrom.y);
   await page.mouse.up();
-  check(await page.evaluate(() => lines[0].join()==='0,1,2,3,0'),'moving away cancels the station removal preview');
+  check(await page.evaluate(() => lines[0].join()==='0,1,2,3,0'),'returning to the press point cancels the station removal preview');
   await dragThrough([removeFrom,removeAt]);
   check(await page.evaluate(() => lines[0].join()==='0,2,3,0' && lines[1].join()==='1,2' && stations.length===4),
     'dropping on the adjacent station removes only its stop on the edited line and keeps the loop');
@@ -742,10 +744,10 @@ async page => {
     setRoute(0,[0,1]);
     const station=stations[0], other=stations[2], train=trains[0];
     for (const stop of [station,other]) {
-      stop.waiting=Array.from({length:7},() => passenger(1));
+      stop.waiting=Array.from({length:9},() => passenger(stop.type===1 ? 2 : 1));
       stop.pressure=10;stop.over=8;
     }
-    train.dwell=1;
+    train.stop=0;train.dwell=1;
     simulate(.1);
     if (station.pressure!==10 || station.over!==8 || other.pressure<=10) return false;
     train.dwell=0;
@@ -871,7 +873,7 @@ async page => {
   // 回归：三座城市 × 四种模式长时间模拟并反复绘制，不应抛出异常
   check(await page.evaluate(() => {
     const rand=Math.random;
-    for (const city of ['London','Paris','NewYork']) for (const mode of ['normal','endless','extreme','creative']) {
+    for (const city of Object.keys(cities)) for (const mode of ['normal','endless','extreme','creative']) {
       document.getElementById('screen')?.open && document.getElementById('screen').close();
       start(city,mode);paused=true;inventory.crossings=12;
       for (let i=0;i<1600 && phase==='play';i++) {
@@ -891,7 +893,22 @@ async page => {
     }
     start('London','normal');
     return true;
-  }),'three cities and four modes run long simulations without errors');
+  }),'all cities and four modes run long simulations without errors');
+  check(await page.evaluate(() => {
+    const crossingsAt=city => {start(city,'normal');const n=inventory.crossings;$('screen').close();return n;};
+    return crossingsAt('London')===3 && crossingsAt('NewYork')===3 && crossingsAt('Paris')===4;
+  }),'Paris starts with four tunnels, London and New York with three');
+  check(await page.evaluate(() => {
+    const options=['carriage','tunnel','station','line'].map(symbol => ({symbol}));
+    const share=city => {
+      cityKey=city;
+      let hits=0;
+      for (let i=0;i<4000;i++) if (pickOffers(options).some(o => o.symbol==='tunnel')) hits++;
+      return hits/4000;
+    };
+    const london=share('London'), newYork=share('NewYork');
+    return Math.abs(london-.5)<.05 && newYork<london-.08;
+  }),'New York offers the tunnel reward less often than other cities');
   const saved=await page.evaluate(() => {
     start('Paris','normal');
     paused=true;time=8;score=12;inventory.crossings=12;
@@ -916,5 +933,26 @@ async page => {
     replayFrames.length===saved.frames && JSON.stringify(lineTrack(0,1,0))===saved.bend &&
     typeof lines[0].bends?.['0/1']==='boolean' && !localStorage.getItem(savedGameKey),saved),
     'reload resumes the last parked game with its network, retiring train, riders and timers');
+  await page.evaluate(() => {
+    berlinEarned=false;localStorage.removeItem('metro-city-berlin');
+    for (const city of berlinSources) for (const mode of ['normal','extreme']) {
+      localStorage.removeItem('metro-best-'+city+'-'+mode);
+    }
+    menuCity='London';menuMode='normal';showMenu();
+  });
+  await page.getByRole('button',{name:'柏林',exact:true}).click();
+  check(await page.getByRole('button',{name:'开始游戏'}).isDisabled(),'Berlin is initially locked');
+  await page.evaluate(() => {score=199;deliver(passenger(1));showMenu();});
+  await page.getByRole('button',{name:'开始游戏'}).click();
+  check(await page.evaluate(() => cityKey==='Berlin' && inventory.crossings===2 &&
+    lines.length===7 && localStorage.getItem('metro-city-berlin')==='unlocked'),'200 deliveries unlock Berlin with two tunnels');
+  await page.evaluate(() => {
+    const random=Math.random;
+    try {Math.random=()=>.4;upgrade();} finally {Math.random=random;}
+  });
+  await page.getByRole('button',{name:'机车',exact:true}).click();
+  await page.getByRole('button',{name:'过河通道 ×1',exact:true}).click();
+  await page.getByRole('dialog').waitFor({state:'hidden'});
+  check(await page.evaluate(() => inventory.crossings===3),'Berlin tunnel reward grants exactly one crossing');
   check(errors.length===0,errors.join(', '));
 }
